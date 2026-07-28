@@ -66,11 +66,34 @@ The plugin installs these role templates:
 
 ## Build Artifact
 
-Current plugin version: `0.2.4`.
+Current plugin version: `0.2.5`.
 
-Local packaged jar: `dist/halo-ai-console-0.2.4.jar`.
+Local packaged jar: `dist/halo-ai-console-0.2.5.jar`.
 
 Historical packaged jars are committed under the repository `dist/` directory for quick download and regression comparison.
+
+## 中文说明
+
+Halo AI Console 是社区维护的 Halo Console 插件，不是 Halo 官方插件。它通过 AI Foundation 发现模型并执行聊天、图像生成和多模态任务。用户选择“默认”时，使用的是 AI Foundation 中对应能力的默认模型：普通聊天使用语言模型，带图片输入时使用多模态模型，`/image` 或图像模式使用图像生成模型。
+
+插件本身免费。使用模型可能产生由 AI Foundation 中配置的第三方服务商收取的 API 费用，费用由 Halo 站点管理员承担。停用相关模型、删除 API 配置或禁用插件即可停止新的调用。
+
+聊天历史、Job、调用日志、图片缓存和个人设置使用 Halo ConfigMap 存储；单条会话删除不会自动删除调用日志、Job、图片缓存或 Halo 附件。普通用户没有删除审计日志的权限。当前版本没有完整的个人数据一键导出/一键删除接口，完整说明和管理员处理方式见仓库根目录的 [`PRIVACY.md`](../PRIVACY.md)。
+
+### AI Foundation 测试接口回退
+
+聊天先调用 `/chat/ui-message/stream`，不存在或不支持时才回退到 `/test-chat/ui-message/stream`。当前图像 Job 的实际顺序是先调用非流式 `/test-image-generation`，再在接口不存在或不支持时尝试 `/image-generation`；这是因为本地验证的 AI Foundation `1.0.0-beta.4` 暴露的是前者。`/test-image-generation` 当前不是 Image Streaming 接口。测试路径来自 AI Foundation 的 Console API，不是插件自建的接口；升级 AI Foundation 后应重新验证接口顺序和是否提供稳定的图像流式接口。
+
+### 本地打包资源和许可证
+
+- `assets/dompurify.min.js`：DOMPurify `3.4.12`，上游许可证为 Apache License 2.0 或 Mozilla Public License 2.0，详见 [DOMPurify LICENSE](https://github.com/cure53/DOMPurify/blob/3.4.12/LICENSE)。
+- Markdown：优先使用 Halo Console 已提供的 `RichTextEditor.defaultMarkdownParser`；没有该运行时能力时使用插件内置的最小 Markdown 解析器。插件没有打包 `marked` 或 `markdown-it`。
+- Mermaid：没有打包 Mermaid 官方库；`main.js` 中的是只支持常见流程图箭头语法的轻量兼容渲染器，属于本项目代码。
+- 代码高亮：`assets/highlight-lite.js` 和 `highlight-lite.css` 是本项目的轻量高亮实现，不是 `highlight.js` 的再分发版本，也没有引入 highlight.js 的许可证义务。
+- LaTeX：没有打包 MathJax。当前仅使用本项目的有限格式处理逻辑，不能视为完整 TeX/LaTeX 引擎；不保证复杂宏包、环境或公式都能渲染。
+- 图标：使用 Halo Console 运行时提供的图标组件；没有额外打包图标库。
+- Java 依赖：使用 Halo 和 AI Foundation 运行时提供的 API/依赖，不在插件中重复打包；具体许可证由对应运行时项目负责。
+- 本插件自身许可证：MIT，见 [`LICENSE`](../LICENSE)。
 
 ## Support
 
