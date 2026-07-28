@@ -21,7 +21,7 @@ This project is not an official Halo project and does not use the official Halo 
 - Detects legacy `AiChatSession` / `AiChatMessage` / call-log / image-cache extension objects, prompts the user to migrate them into the per-user ConfigMap store, and records a backend migration marker so the prompt does not repeat across browsers.
 - Legacy extension objects are copied but not deleted when Halo reports missing indices for the old extension types. The migration still returns success with `legacyDeleteSkipped` and `deleteWarnings` so the new store is usable without risking data loss.
 - Renders Markdown, code blocks, lightweight Mermaid flowcharts, and common LaTeX fragments with local bundled assets. Rendered HTML is sanitized before insertion with bundled official DOMPurify `3.4.12` and falls back to a strict allow-list sanitizer before the script finishes loading; no external MathJax, highlight.js, or DOMPurify CDN is used.
-- Backend jobs enforce the plugin global settings for model allow-list, atomic concurrent-job reservation, in-memory sliding-window per-minute rate limits, persisted daily token quota, context message count, context character count, image count, session size, generated image size, and combined reasoning/output length. Limit violations return `429 Too Many Requests` where applicable.
+- Backend jobs enforce the plugin global settings for model allow-list, context limits, generated image size, image-cache retention, and combined reasoning/output length. The persistent per-user/per-day ConfigMap is the cross-instance source of truth for concurrent reservations, request timestamps, and daily token usage; the JVM `usageStates` map is only a local cache/fast-path and is never the sole quota authority. Limit violations return `429 Too Many Requests` where applicable.
 
 ## Permissions
 
@@ -31,12 +31,14 @@ The plugin installs these role templates:
 - `View own AI audit logs`: can view the audit-log view for the current user.
 - `Manage Halo AI Console`: can read all users' logs, run legacy migration, and access admin-only console endpoints. All-log and migration endpoints also perform backend permission checks in addition to Halo RBAC.
 - Global plugin settings are exposed through Halo's plugin settings page via `settingName` / `configMapName` and should be managed by users who already have Halo plugin management permission.
+- `GET /me/export` exports the current user's sessions, personal settings, logs, jobs, and attachment references as JSON. `DELETE /me/data` deletes the current user's sessions, jobs, image caches, usage records, and personal settings; audit-log deletion follows the administrator policy `allowUserAuditLogDeletion`, and Halo attachments are not deleted by the plugin.
 
 ## Privacy and Data Processing
 
 - Conversation snapshots, message content, user settings, job records, image cache metadata, usage counters, and audit logs are stored in Halo-managed ConfigMaps.
 - Chat, image, and file inputs are forwarded to AI Foundation and then to the model provider configured by the Halo administrator. The plugin itself does not hard-code provider credentials.
 - Uploaded images pass through the plugin backend proxy and are then stored by the configured Halo attachment storage.
+- Image-cache ConfigMap entries are cleaned using the administrator-configured `imageCacheRetentionDays` value, defaulting to 30 days. This removes plugin cache entries only; it does not delete the corresponding Halo attachments.
 - Audit logs may contain user identifiers, model names, token estimates, timestamps, request duration, IP address, browser, operating system, operation status, and error messages.
 - The plugin does not include telemetry, analytics SDKs, external CDN scripts, or hard-coded third-party API keys.
 - Administrators should review the enabled AI Foundation providers, retention settings, and attachment storage policy before granting the plugin roles to other users.
@@ -50,6 +52,7 @@ The plugin installs these role templates:
 - Plugin global model/settings policy: `/apis/console.api.halo-ai-console.halo.run/v1alpha1/global-settings`
 - Bundled DOMPurify asset: `/apis/console.api.halo-ai-console.halo.run/v1alpha1/assets/dompurify.min.js`
 - Legacy storage migration: `/apis/console.api.halo-ai-console.halo.run/v1alpha1/migration/legacy/status` and `/migration/legacy`
+- Personal data export/deletion: `/apis/console.api.halo-ai-console.halo.run/v1alpha1/me/export` and `/me/data`
 - Plugin storage: `/apis/console.api.halo-ai-console.halo.run/v1alpha1/*`
 
 ## Notes
@@ -66,9 +69,9 @@ The plugin installs these role templates:
 
 ## Build Artifact
 
-Current plugin version: `0.2.5`.
+Current plugin version: `0.2.6`.
 
-Local packaged jar: `dist/halo-ai-console-0.2.5.jar`.
+Local packaged jar: `dist/halo-ai-console-0.2.6.jar`.
 
 Historical packaged jars are committed under the repository `dist/` directory for quick download and regression comparison.
 
@@ -78,7 +81,7 @@ Halo AI Console 是社区维护的 Halo Console 插件，不是 Halo 官方插�
 
 插件本身免费。使用模型可能产生由 AI Foundation 中配置的第三方服务商收取的 API 费用，费用由 Halo 站点管理员承担。停用相关模型、删除 API 配置或禁用插件即可停止新的调用。
 
-聊天历史、Job、调用日志、图片缓存和个人设置使用 Halo ConfigMap 存储；单条会话删除不会自动删除调用日志、Job、图片缓存或 Halo 附件。普通用户没有删除审计日志的权限。当前版本没有完整的个人数据一键导出/一键删除接口，完整说明和管理员处理方式见仓库根目录的 [`PRIVACY.md`](../PRIVACY.md)。
+聊天历史、Job、调用日志、图片缓存和个人设置使用 Halo ConfigMap 存储。设置页提供“导出我的数据”和“删除我的数据”：删除会话、Job、图片缓存、用量记录和个人设置；审计日志是否删除由管理员策略决定，Halo 附件仍需在附件管理中单独删除。完整说明见仓库根目录的 [`PRIVACY.md`](../PRIVACY.md)。
 
 ### AI Foundation 测试接口回退
 
@@ -87,6 +90,7 @@ Halo AI Console 是社区维护的 Halo Console 插件，不是 Halo 官方插�
 ### 本地打包资源和许可证
 
 - `assets/dompurify.min.js`：DOMPurify `3.4.12`，上游许可证为 Apache License 2.0 或 Mozilla Public License 2.0，详见 [DOMPurify LICENSE](https://github.com/cure53/DOMPurify/blob/3.4.12/LICENSE)。
+- JAR 内同时包含根目录 `LICENSE`、`THIRD-PARTY-NOTICES.md` 和 `licenses/DOMPURIFY-LICENSE.txt`，便于离线查看许可证和归属信息。
 - Markdown：优先使用 Halo Console 已提供的 `RichTextEditor.defaultMarkdownParser`；没有该运行时能力时使用插件内置的最小 Markdown 解析器。插件没有打包 `marked` 或 `markdown-it`。
 - Mermaid：没有打包 Mermaid 官方库；`main.js` 中的是只支持常见流程图箭头语法的轻量兼容渲染器，属于本项目代码。
 - 代码高亮：`assets/highlight-lite.js` 和 `highlight-lite.css` 是本项目的轻量高亮实现，不是 `highlight.js` 的再分发版本，也没有引入 highlight.js 的许可证义务。

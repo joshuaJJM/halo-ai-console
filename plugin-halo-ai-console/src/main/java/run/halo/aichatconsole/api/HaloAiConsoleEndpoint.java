@@ -75,6 +75,8 @@ public class HaloAiConsoleEndpoint implements CustomEndpoint {
   private static final int MAX_IMAGES_PER_MESSAGE = 20;
   private static final int MAX_TAGS_PER_SESSION = 20;
   private static final int MAX_DATA_URL_LENGTH = 2_000_000;
+  private static final int MAX_EXPORT_LOGS = 10_000;
+  private static final int MAX_EXPORT_JOBS = 10_000;
   private static final long HARD_MAX_IMAGE_BYTES = 50L * 1024L * 1024L;
   private static final Set<String> ROLES = Set.of("user", "assistant");
   private static final String STORE_CONFIG_MAP_PREFIX = "halo-ai-console-store-";
@@ -158,6 +160,8 @@ public class HaloAiConsoleEndpoint implements CustomEndpoint {
       .GET("/sessions-with-messages", this::listSessionsWithMessages)
       .PUT("/sessions/{name}/snapshot", this::saveSessionSnapshot)
       .DELETE("/sessions/{name}", this::deleteSession)
+      .GET("/me/export", this::exportOwnData)
+      .DELETE("/me/data", this::deleteOwnData)
       .GET("/call-logs", this::listCallLogs)
       .GET("/call-logs/all", this::listAllCallLogs)
       .POST("/call-logs", this::createCallLog)
@@ -229,6 +233,59 @@ public class HaloAiConsoleEndpoint implements CustomEndpoint {
       .flatMap(owner -> updateStore(owner, data -> data.remove(sessionKey(name)))
         .then(deleteSessionStore(owner, name)))
       .then(ServerResponse.noContent().build());
+  }
+
+  private Mono<ServerResponse> exportOwnData(ServerRequest request) {
+    return owner(request).flatMap(owner -> Mono.zip(
+        sessionsForExport(owner),
+        settingsFor(owner),
+        logFluxFor(owner).take(MAX_EXPORT_LOGS).collectList(),
+        jobRecordsForOwner(owner).take(MAX_EXPORT_JOBS).map(record -> record.job).collectList()
+      )
+      .map(tuple -> {
+        var result = new LinkedHashMap<String, Object>();
+        result.put("schemaVersion", "1");
+        result.put("exportedAt", System.currentTimeMillis());
+        result.put("owner", owner);
+        result.put("sessions", tuple.getT1());
+        result.put("settings", tuple.getT2());
+        result.put("logs", tuple.getT3());
+        result.put("jobs", tuple.getT4());
+        result.put("attachments", attachmentReferences(tuple.getT1()));
+        return result;
+      })
+      .flatMap(result -> ServerResponse.ok()
+        .contentType(MediaType.APPLICATION_JSON)
+        .bodyValue(result)));
+  }
+
+  private Mono<ServerResponse> deleteOwnData(ServerRequest request) {
+    return Mono.zip(owner(request), globalSettings()).flatMap(tuple -> {
+      var owner = tuple.getT1();
+      var deleteAuditLogs = Boolean.TRUE.equals(booleanValue(tuple.getT2().get("allowUserAuditLogDeletion")));
+      return cancelOwnerJobs(owner)
+        .then(Mono.zip(
+          deleteOwnedConfigMaps(SESSION_CONFIG_MAP_PREFIX + safeName("owner", owner) + "-"),
+          deleteOwnedConfigMaps(JOB_CONFIG_MAP_PREFIX + safeName("owner", owner) + "-"),
+          deleteOwnedConfigMaps(USAGE_CONFIG_MAP_PREFIX + safeName("owner", owner) + "-"),
+          deleteOwnedLogMaps(owner, deleteAuditLogs),
+          clearOwnStore(owner, deleteAuditLogs)
+        ))
+        .map(counts -> {
+          var result = new LinkedHashMap<String, Object>();
+          result.put("sessionsDeleted", counts.getT1());
+          result.put("jobsDeleted", counts.getT2());
+          result.put("usageRecordsDeleted", counts.getT3());
+          result.put("auditLogsDeleted", counts.getT4() + counts.getT5());
+          result.put("auditLogsRetained", !deleteAuditLogs);
+          result.put("attachmentsDeleted", 0);
+          result.put("message", deleteAuditLogs
+            ? "Personal chat data and audit logs were deleted. Halo attachments must be deleted separately."
+            : "Personal chat data was deleted. Audit logs were retained by administrator policy, and Halo attachments must be deleted separately.");
+          return result;
+        })
+        .flatMap(result -> ServerResponse.ok().bodyValue(result));
+    });
   }
 
   private Mono<ServerResponse> listCallLogs(ServerRequest request) {
@@ -1705,12 +1762,15 @@ public class HaloAiConsoleEndpoint implements CustomEndpoint {
       var now = System.currentTimeMillis();
       var jobRetentionDays = clampInt(settings.get("jobRetentionDays"), 1, 365, 7);
       var logRetentionDays = clampInt(settings.get("logRetentionDays"), 7, 3650, 90);
+      var imageCacheRetentionDays = clampInt(settings.get("imageCacheRetentionDays"), 1, 3650, 30);
       var maxJobsPerUser = clampInt(settings.get("maxJobsPerUser"), 50, 10000, 500);
       var jobCutoff = now - Duration.ofDays(jobRetentionDays).toMillis();
       var logCutoff = now - Duration.ofDays(logRetentionDays).toMillis();
+      var imageCacheCutoff = now - Duration.ofDays(imageCacheRetentionDays).toMillis();
       return deleteExpiredJobs(jobCutoff)
         .then(deleteExcessJobs(maxJobsPerUser))
         .then(deleteExpiredLogs(logCutoff))
+        .then(deleteExpiredImageCaches(imageCacheCutoff))
         .then(deleteExpiredUsage(logCutoff));
     });
   }
@@ -1774,6 +1834,35 @@ public class HaloAiConsoleEndpoint implements CustomEndpoint {
       .then();
   }
 
+  private Mono<Void> deleteExpiredImageCaches(long cutoff) {
+    return client.list(
+        ConfigMap.class,
+        item -> item.getMetadata() != null && idOf(item).startsWith(STORE_CONFIG_MAP_PREFIX),
+        Comparator.comparing(this::idOf)
+      )
+      .flatMap(configMap -> {
+        var data = configMap.getData() == null
+          ? new LinkedHashMap<String, String>()
+          : new LinkedHashMap<>(configMap.getData());
+        var changed = data.entrySet().removeIf(entry -> {
+          if (!entry.getKey().startsWith(IMAGE_KEY_PREFIX)) {
+            return false;
+          }
+          var image = readMapValue(entry.getValue());
+          var createdAt = longValue(image.get("createdAt"));
+          return createdAt != null && createdAt < cutoff;
+        });
+        if (!changed) {
+          return Mono.<Void>empty();
+        }
+        configMap.setData(data);
+        return client.update(configMap)
+          .retryWhen(Retry.backoff(4, Duration.ofMillis(60)).filter(this::isOptimisticLockConflict))
+          .then();
+      })
+      .then();
+  }
+
   private Flux<JobRecord> jobRecords() {
     return client.list(
         ConfigMap.class,
@@ -1812,6 +1901,124 @@ public class HaloAiConsoleEndpoint implements CustomEndpoint {
     return client.fetch(ConfigMap.class, sessionStoreName(owner, sessionId))
       .flatMap(client::delete)
       .then();
+  }
+
+  private Mono<List<Map<String, Object>>> sessionsForExport(String owner) {
+    return Mono.zip(
+        fetchStore(owner).map(store -> store.getData().entrySet().stream()
+          .filter(entry -> entry.getKey().startsWith(SESSION_KEY_PREFIX))
+          .map(entry -> readMapValue(entry.getValue()))
+          .collect(Collectors.toList())),
+        sessionStoreSessions(owner).collectList()
+      )
+      .map(tuple -> {
+        var sessions = new LinkedHashMap<String, Map<String, Object>>();
+        tuple.getT1().forEach(session -> sessions.put(stringValue(session.get("id")), session));
+        tuple.getT2().forEach(session -> sessions.put(stringValue(session.get("id")), session));
+        return sessions.values().stream()
+          .sorted((left, right) -> Long.compare(
+            nullToZero(longValue(right.get("updatedAt"))),
+            nullToZero(longValue(left.get("updatedAt")))))
+          .collect(Collectors.toList());
+      });
+  }
+
+  private Flux<JobRecord> jobRecordsForOwner(String owner) {
+    return jobRecords().filter(record -> owner.equals(stringValue(record.job.get("owner"))));
+  }
+
+  private List<Map<String, Object>> attachmentReferences(List<Map<String, Object>> sessions) {
+    var references = new ArrayList<Map<String, Object>>();
+    for (var session : sessions) {
+      var sessionId = stringValue(session.get("id"));
+      for (var message : listOfMaps(session.get("messages"))) {
+        for (var file : listOfMaps(message.get("files"))) {
+          var reference = new LinkedHashMap<String, Object>();
+          reference.put("sessionId", sessionId);
+          reference.put("messageId", stringValue(message.get("id")));
+          file.forEach((key, value) -> {
+            if ("data".equals(key) || "dataUrl".equals(key)) {
+              reference.put(key + "Length", stringValue(value).length());
+            } else {
+              reference.put(key, value);
+            }
+          });
+          references.add(reference);
+        }
+        for (var image : listOfStrings(message.get("images"))) {
+          var reference = new LinkedHashMap<String, Object>();
+          reference.put("sessionId", sessionId);
+          reference.put("messageId", stringValue(message.get("id")));
+          if (image.startsWith("data:")) {
+            reference.put("dataUrlLength", image.length());
+          } else {
+            reference.put("url", image);
+          }
+          references.add(reference);
+        }
+      }
+    }
+    return references;
+  }
+
+  private Mono<Void> cancelOwnerJobs(String owner) {
+    var ownerPrefix = safeName("owner", owner) + "/";
+    runningJobs.entrySet().removeIf(entry -> {
+      if (!entry.getKey().startsWith(ownerPrefix)) {
+        return false;
+      }
+      var disposable = entry.getValue();
+      if (disposable != null && !disposable.isDisposed()) {
+        disposable.dispose();
+      }
+      return true;
+    });
+    runningJobStates.keySet().removeIf(key -> key.startsWith(ownerPrefix));
+    jobEventSinks.entrySet().removeIf(entry -> {
+      if (!entry.getKey().startsWith(ownerPrefix)) {
+        return false;
+      }
+      entry.getValue().tryEmitComplete();
+      return true;
+    });
+    return Mono.empty();
+  }
+
+  private Mono<Integer> deleteOwnedConfigMaps(String prefix) {
+    return client.list(
+        ConfigMap.class,
+        item -> item.getMetadata() != null && idOf(item).startsWith(prefix),
+        Comparator.comparing(this::idOf)
+      )
+      .flatMap(configMap -> client.delete(configMap).thenReturn(1))
+      .reduce(0, Integer::sum);
+  }
+
+  private Mono<Integer> deleteOwnedLogMaps(String owner, boolean deleteAuditLogs) {
+    if (!deleteAuditLogs) {
+      return Mono.just(0);
+    }
+    return deleteOwnedConfigMaps(LOG_CONFIG_MAP_PREFIX + safeName("owner", owner) + "-");
+  }
+
+  private Mono<Integer> clearOwnStore(String owner, boolean deleteAuditLogs) {
+    return client.fetch(ConfigMap.class, storeName(owner))
+      .flatMap(configMap -> {
+        var data = configMap.getData() == null
+          ? new LinkedHashMap<String, String>()
+          : new LinkedHashMap<>(configMap.getData());
+        var legacyLogCount = (int) data.keySet().stream()
+          .filter(key -> key.startsWith(LOG_KEY_PREFIX))
+          .count();
+        if (deleteAuditLogs) {
+          return client.delete(configMap).thenReturn(legacyLogCount);
+        }
+        data.entrySet().removeIf(entry -> !entry.getKey().startsWith(LOG_KEY_PREFIX));
+        configMap.setData(data);
+        return client.update(configMap).thenReturn(0);
+      })
+      .defaultIfEmpty(0)
+      .retryWhen(Retry.backoff(4, Duration.ofMillis(60)).filter(this::isOptimisticLockConflict));
   }
 
   private Flux<Map<String, Object>> sessionStoreSessions(String owner) {
@@ -1993,7 +2200,9 @@ public class HaloAiConsoleEndpoint implements CustomEndpoint {
     settings.put("maxImagesPerRequest", clampInt(source.get("maxImagesPerRequest"), 0, 50, MAX_REQUEST_IMAGES));
     settings.put("jobRetentionDays", clampInt(source.get("jobRetentionDays"), 1, 365, 7));
     settings.put("logRetentionDays", clampInt(source.get("logRetentionDays"), 7, 3650, 90));
+    settings.put("imageCacheRetentionDays", clampInt(source.get("imageCacheRetentionDays"), 1, 3650, 30));
     settings.put("maxJobsPerUser", clampInt(source.get("maxJobsPerUser"), 50, 10000, 500));
+    settings.put("allowUserAuditLogDeletion", Boolean.TRUE.equals(booleanValue(source.get("allowUserAuditLogDeletion"))));
     return settings;
   }
 
@@ -2111,12 +2320,21 @@ public class HaloAiConsoleEndpoint implements CustomEndpoint {
   }
 
   private Mono<Void> releasePersistentUsageReservation(UsageReservation reservation) {
-    return updateUsageRecord(reservation.owner, reservation.day, data -> {
-      var reservations = readMapValue(data.get("reservations"));
-      reservations.remove(safeName("job", reservation.jobId));
-      data.put("reservations", writeMapValue(reservations));
-      data.put("updatedAt", String.valueOf(System.currentTimeMillis()));
-    }).then().onErrorResume(error -> Mono.empty());
+    return client.fetch(ConfigMap.class, usageStoreName(reservation.owner, reservation.day))
+      .flatMap(configMap -> {
+        var data = configMap.getData() == null
+          ? new LinkedHashMap<String, String>()
+          : new LinkedHashMap<>(configMap.getData());
+        var reservations = readMapValue(data.get("reservations"));
+        reservations.remove(safeName("job", reservation.jobId));
+        data.put("reservations", writeMapValue(reservations));
+        data.put("updatedAt", String.valueOf(System.currentTimeMillis()));
+        configMap.setData(data);
+        return client.update(configMap);
+      })
+      .retryWhen(Retry.backoff(6, Duration.ofMillis(50)).filter(this::isOptimisticLockConflict))
+      .then()
+      .onErrorResume(error -> Mono.empty());
   }
 
   private Mono<Void> requireAdminPermission(ServerRequest request) {

@@ -22,7 +22,7 @@ Halo AI Console 是一个由社区维护的 Halo Console 插件，基于 AI Foun
 
 The plugin source lives in [`plugin-halo-ai-console`](plugin-halo-ai-console/).
 
-Current plugin version: `0.2.5`.
+Current plugin version: `0.2.6`.
 
 ## Requirements
 
@@ -37,7 +37,7 @@ Current plugin version: `0.2.5`.
 Packaged artifacts are committed under:
 
 ```text
-dist/halo-ai-console-0.2.5.jar
+dist/halo-ai-console-0.2.6.jar
 ```
 
 The `dist/` directory keeps historical packaged jars for quick download and regression comparison.
@@ -58,7 +58,7 @@ For implementation details, permissions, storage behavior, third-party resources
 ### 安装和配置
 
 1. 安装并启用 AI Foundation，配置至少一个语言/多模态模型和一个图像生成模型。
-2. 安装 `dist/halo-ai-console-0.2.5.jar`。
+2. 安装 `dist/halo-ai-console-0.2.6.jar`。
 3. 在 Halo 插件设置中配置默认模型、允许使用的模型、并发与配额、图片大小和 Job/日志保留策略。
 4. 为用户授予 Halo AI 角色；需要查看全部审计记录或迁移旧数据时，再授予对应的管理员权限。
 
@@ -68,7 +68,7 @@ For implementation details, permissions, storage behavior, third-party resources
 
 ### 隐私和数据
 
-完整的数据类型、默认保留时间、删除/导出限制、附件处理、卸载行为、审计日志权限和第三方资源清单请阅读 [`PRIVACY.md`](PRIVACY.md)。
+完整的数据类型、默认保留时间、个人数据导出/删除、附件处理、卸载行为、审计日志权限和第三方资源清单请阅读 [`PRIVACY.md`](PRIVACY.md)。
 
 ## Privacy
 

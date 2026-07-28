@@ -2121,6 +2121,24 @@
         logs.value = [];
         saveCallLogs([]);
       };
+      const exportOwnData = async () => {
+        try {
+          const { data } = await axios.get(`${CHAT_API}/me/export`);
+          downloadText(`halo-ai-console-data-${Date.now()}.json`, JSON.stringify(data, null, 2));
+        } catch (cause) {
+          logError.value = `个人数据导出失败：${cause?.response?.data?.detail || cause?.message || "请求失败"}`;
+        }
+      };
+      const deleteOwnData = async () => {
+        if (!window.confirm("这会删除你的会话、Job、图片缓存、用量记录和个人设置；是否继续？审计日志和 Halo 附件是否删除由管理员策略决定。")) return;
+        try {
+          await axios.delete(`${CHAT_API}/me/data`);
+          [STORE_KEY, SELECTED_KEY, SETTINGS_KEY, LOG_KEY].forEach((key) => localStorage.removeItem(key));
+          window.location.reload();
+        } catch (cause) {
+          logError.value = `个人数据删除失败：${cause?.response?.data?.detail || cause?.message || "请求失败"}`;
+        }
+      };
       onMounted(() => { load(); probeAllLogsPermission(); refreshLogs(); });
       return () => h("div", { class: "ai-chat-settings" }, [
         h("style", AI_CHAT_CSS),
@@ -2154,6 +2172,10 @@
             onInput: (event) => { settings.value.memoryText = event.target.value; },
           })]),
           h(Button, { type: "primary", onClick: save }, () => "保存设置"),
+          h("div", { class: "settings-data-actions" }, [
+            h(Button, { size: "sm", onClick: exportOwnData }, () => "导出我的数据"),
+            h(Button, { size: "sm", type: "danger", onClick: deleteOwnData }, () => "删除我的数据"),
+          ]),
         ]),
         h("section", { class: "settings-panel" }, [
           h("div", { class: "settings-title-row" }, [

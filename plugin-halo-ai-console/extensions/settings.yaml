@@ -119,6 +119,23 @@ spec:
           min: 7
           max: 3650
         - $formkit: number
+          name: imageCacheRetentionDays
+          label: 图片缓存保留天数
+          help: 到期后清理插件保存的图片缓存元数据和受限制的 data URL，不删除 Halo 附件库中的原始附件。
+          value: 30
+          min: 1
+          max: 3650
+        - $formkit: radio
+          name: allowUserAuditLogDeletion
+          label: 允许用户在删除个人数据时删除自己的审计日志
+          help: 关闭时，DELETE /me/data 会保留该用户的审计日志；管理员始终可以按权限查看全部日志。
+          value: false
+          options:
+            - label: 不允许
+              value: false
+            - label: 允许
+              value: true
+        - $formkit: number
           name: maxJobsPerUser
           label: 每用户最多保留 Job 数
           value: 500
