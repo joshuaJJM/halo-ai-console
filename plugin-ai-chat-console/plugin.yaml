@@ -1,0 +1,23 @@
+apiVersion: plugin.halo.run/v1alpha1
+kind: Plugin
+metadata:
+  name: ai-chat-console
+  annotations:
+    store.halo.run/recommended-apps: "[\"app-acslk9nu\"]"
+spec:
+  enabled: true
+  requires: ">=2.25.0"
+  pluginDependencies:
+    ai-foundation: "*"
+  author:
+    name: "Codex"
+    website: "https://www.halo.run"
+  logo: "icon.svg"
+  settingName: "ai-chat-console-settings"
+  configMapName: "ai-chat-console-config"
+  displayName: "Halo AI Console"
+  description: "AI-powered chat, image generation, audit, and model management for Halo Console."
+  license:
+    - name: "MIT"
+      url: "https://opensource.org/license/mit"
+  version: "0.2.3"

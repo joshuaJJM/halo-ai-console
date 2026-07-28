@@ -1,0 +1,20 @@
+# Local Halo runtime and developer workspace files
+/data/
+/tools/
+/plugin-references/
+/start-halo.bat
+/halo-*.jar
+/*-backup-*.zip
+
+# Build artifacts
+/dist/
+/dist - 副本/
+*.class
+*.log
+
+# OS/editor files
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+
