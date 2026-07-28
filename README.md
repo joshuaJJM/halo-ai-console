@@ -18,7 +18,7 @@ Halo AI Console is a Halo Console plugin built on top of AI Foundation. It adds 
 
 ## Repository
 
-The plugin source lives in [`plugin-ai-chat-console`](plugin-ai-chat-console/).
+The plugin source lives in [`plugin-halo-ai-console`](plugin-halo-ai-console/).
 
 Current plugin version: `0.2.3`.
 
@@ -35,12 +35,12 @@ Current plugin version: `0.2.3`.
 Packaged artifacts are committed under:
 
 ```text
-dist/ai-chat-console-0.2.3.jar
+dist/halo-ai-console-0.2.3.jar
 ```
 
 The `dist/` directory keeps historical packaged jars for quick download and regression comparison.
 
-For implementation details, permissions, storage behavior, and API notes, see [`plugin-ai-chat-console/README.md`](plugin-ai-chat-console/README.md).
+For implementation details, permissions, storage behavior, and API notes, see [`plugin-halo-ai-console/README.md`](plugin-halo-ai-console/README.md).
 
 ## License
 

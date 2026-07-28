@@ -59,7 +59,7 @@ import run.halo.app.extension.Metadata;
 import run.halo.app.extension.ReactiveExtensionClient;
 
 @Component
-public class AiChatConsoleEndpoint implements CustomEndpoint {
+public class HaloAiConsoleEndpoint implements CustomEndpoint {
   private static final int MAX_TITLE_LENGTH = 120;
   private static final int MAX_MEMORY_LENGTH = 20000;
   private static final int MAX_CONTENT_LENGTH = 200000;
@@ -77,12 +77,12 @@ public class AiChatConsoleEndpoint implements CustomEndpoint {
   private static final int MAX_DATA_URL_LENGTH = 2_000_000;
   private static final long HARD_MAX_IMAGE_BYTES = 50L * 1024L * 1024L;
   private static final Set<String> ROLES = Set.of("user", "assistant");
-  private static final String STORE_CONFIG_MAP_PREFIX = "ai-chat-console-store-";
-  private static final String SESSION_CONFIG_MAP_PREFIX = "ai-chat-console-session-";
-  private static final String JOB_CONFIG_MAP_PREFIX = "ai-chat-console-job-";
-  private static final String LOG_CONFIG_MAP_PREFIX = "ai-chat-console-log-";
-  private static final String USAGE_CONFIG_MAP_PREFIX = "ai-chat-console-usage-";
-  private static final String INSTANCE_CONFIG_MAP_PREFIX = "ai-chat-console-instance-";
+  private static final String STORE_CONFIG_MAP_PREFIX = "halo-ai-console-store-";
+  private static final String SESSION_CONFIG_MAP_PREFIX = "halo-ai-console-session-";
+  private static final String JOB_CONFIG_MAP_PREFIX = "halo-ai-console-job-";
+  private static final String LOG_CONFIG_MAP_PREFIX = "halo-ai-console-log-";
+  private static final String USAGE_CONFIG_MAP_PREFIX = "halo-ai-console-usage-";
+  private static final String INSTANCE_CONFIG_MAP_PREFIX = "halo-ai-console-instance-";
   private static final long INSTANCE_HEARTBEAT_TTL_MS = 35_000L;
   private static final long JOB_STALE_AFTER_MS = 30_000L;
   private static final String SESSION_KEY_PREFIX = "session:";
@@ -91,7 +91,7 @@ public class AiChatConsoleEndpoint implements CustomEndpoint {
   private static final String JOB_KEY_PREFIX = "job:";
   private static final String LEGACY_MIGRATION_KEY = "migration:legacy";
   private static final String SETTINGS_KEY = "settings";
-  private static final String GLOBAL_CONFIG_MAP = "ai-chat-console-config";
+  private static final String GLOBAL_CONFIG_MAP = "halo-ai-console-config";
   private static final String GLOBAL_CONFIG_GROUP = "basic";
 
   private final ReactiveExtensionClient client;
@@ -102,7 +102,7 @@ public class AiChatConsoleEndpoint implements CustomEndpoint {
   private final Map<String, UserUsageState> usageStates = new ConcurrentHashMap<>();
   private final Map<String, Sinks.Many<Map<String, Object>>> jobEventSinks = new ConcurrentHashMap<>();
 
-  public AiChatConsoleEndpoint(ReactiveExtensionClient client) {
+  public HaloAiConsoleEndpoint(ReactiveExtensionClient client) {
     this.client = client;
     Flux.interval(Duration.ZERO, Duration.ofSeconds(10))
       .flatMap(tick -> heartbeatInstance().onErrorResume(error -> Mono.empty()))
@@ -149,7 +149,7 @@ public class AiChatConsoleEndpoint implements CustomEndpoint {
 
   @Override
   public GroupVersion groupVersion() {
-    return new GroupVersion("console.api.ai-chat-console.halo.run", "v1alpha1");
+    return new GroupVersion("console.api.halo-ai-console.halo.run", "v1alpha1");
   }
 
   @Override
@@ -741,10 +741,10 @@ public class AiChatConsoleEndpoint implements CustomEndpoint {
           return ServerResponse.ok().bodyValue(result);
         }
         return Mono.zip(
-            legacyRestItems(request, "ai-chat-sessions").map(items -> legacyItemsForOwner(items, owner).size()).onErrorReturn(0),
-            legacyRestItems(request, "ai-chat-messages").map(items -> legacyItemsForOwner(items, owner).size()).onErrorReturn(0),
-            legacyRestItems(request, "ai-chat-call-logs").map(items -> legacyItemsForOwner(items, owner).size()).onErrorReturn(0),
-            legacyRestItems(request, "ai-chat-image-caches").map(items -> legacyItemsForOwner(items, owner).size()).onErrorReturn(0)
+            legacyRestItems(request, "halo-ai-sessions").map(items -> legacyItemsForOwner(items, owner).size()).onErrorReturn(0),
+            legacyRestItems(request, "halo-ai-messages").map(items -> legacyItemsForOwner(items, owner).size()).onErrorReturn(0),
+            legacyRestItems(request, "halo-ai-call-logs").map(items -> legacyItemsForOwner(items, owner).size()).onErrorReturn(0),
+            legacyRestItems(request, "halo-ai-image-caches").map(items -> legacyItemsForOwner(items, owner).size()).onErrorReturn(0)
           )
           .flatMap(tuple -> {
             result.put("sessions", tuple.getT1());
@@ -766,10 +766,10 @@ public class AiChatConsoleEndpoint implements CustomEndpoint {
       result.put("legacyDeleteSkipped", true);
       warnings.add("Legacy extension objects were copied but not deleted because this Halo runtime reports missing indices for the old AI chat extension types.");
       return Mono.zip(
-          legacyRestItems(request, "ai-chat-sessions").map(items -> legacyItemsForOwner(items, owner)),
-          legacyRestItems(request, "ai-chat-messages").map(items -> legacyItemsForOwner(items, owner)),
-          legacyRestItems(request, "ai-chat-call-logs").map(items -> legacyItemsForOwner(items, owner)),
-          legacyRestItems(request, "ai-chat-image-caches").map(items -> legacyItemsForOwner(items, owner))
+          legacyRestItems(request, "halo-ai-sessions").map(items -> legacyItemsForOwner(items, owner)),
+          legacyRestItems(request, "halo-ai-messages").map(items -> legacyItemsForOwner(items, owner)),
+          legacyRestItems(request, "halo-ai-call-logs").map(items -> legacyItemsForOwner(items, owner)),
+          legacyRestItems(request, "halo-ai-image-caches").map(items -> legacyItemsForOwner(items, owner))
         )
         .flatMap(tuple -> {
           var messages = tuple.getT2().stream()
@@ -826,7 +826,7 @@ public class AiChatConsoleEndpoint implements CustomEndpoint {
 
   private Mono<List<Map<String, Object>>> legacyRestItemsPage(ServerRequest request, String plural, int page,
     List<Map<String, Object>> accumulated) {
-    var target = baseUrl(request) + "/apis/ai-chat-console.halo.run/v1alpha1/" + plural
+    var target = baseUrl(request) + "/apis/halo-ai-console.halo.run/v1alpha1/" + plural
       + "?page=" + page + "&size=25";
     return WebClient.builder()
       .codecs(configurer -> configurer.defaultCodecs().maxInMemorySize((int) HARD_MAX_IMAGE_BYTES))
@@ -1624,7 +1624,7 @@ public class AiChatConsoleEndpoint implements CustomEndpoint {
       .switchIfEmpty(Mono.defer(() -> {
         var session = new LinkedHashMap<String, Object>();
         session.put("id", sessionId);
-        session.put("title", "AI Chat");
+        session.put("title", "Halo AI");
         session.put("memory", "");
         session.put("createdAt", System.currentTimeMillis());
         session.put("updatedAt", System.currentTimeMillis());
@@ -2132,9 +2132,9 @@ public class AiChatConsoleEndpoint implements CustomEndpoint {
     }
     return authentication.getAuthorities().stream()
       .map(authority -> authority.getAuthority())
-      .anyMatch(authority -> authority.contains("plugin:ai-chat-console:admin")
-        || authority.contains("plugin:ai-chat-console:call-log-all")
-        || authority.contains("role-template-ai-chat-console-admin")
+      .anyMatch(authority -> authority.contains("plugin:halo-ai-console:admin")
+        || authority.contains("plugin:halo-ai-console:call-log-all")
+        || authority.contains("role-template-halo-ai-console-admin")
         || authority.contains("super-role")
         || authority.contains("super-admin")
         || authority.contains("administrator"));

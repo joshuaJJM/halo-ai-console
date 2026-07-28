@@ -1,7 +1,7 @@
 apiVersion: plugin.halo.run/v1alpha1
 kind: Plugin
 metadata:
-  name: ai-chat-console
+  name: halo-ai-console
   annotations:
     store.halo.run/recommended-apps: "[\"app-acslk9nu\"]"
 spec:
@@ -13,8 +13,8 @@ spec:
     name: "Codex"
     website: "https://www.halo.run"
   logo: "icon.svg"
-  settingName: "ai-chat-console-settings"
-  configMapName: "ai-chat-console-config"
+  settingName: "halo-ai-console-settings"
+  configMapName: "halo-ai-console-config"
   displayName: "Halo AI Console"
   description: "AI-powered chat, image generation, audit, and model management for Halo Console."
   license:

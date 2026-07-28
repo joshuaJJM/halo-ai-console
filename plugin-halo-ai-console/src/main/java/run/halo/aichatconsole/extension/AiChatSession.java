@@ -6,7 +6,7 @@ import java.util.List;
 import run.halo.app.extension.AbstractExtension;
 import run.halo.app.extension.GVK;
 
-@GVK(group = "ai-chat-console.halo.run", version = "v1alpha1", kind = "AiChatSession", plural = "ai-chat-sessions", singular = "ai-chat-session")
+@GVK(group = "halo-ai-console.halo.run", version = "v1alpha1", kind = "AiChatSession", plural = "halo-ai-sessions", singular = "halo-ai-session")
 public class AiChatSession extends AbstractExtension {
   private SessionSpec spec = new SessionSpec();
   private SessionStatus status = new SessionStatus();

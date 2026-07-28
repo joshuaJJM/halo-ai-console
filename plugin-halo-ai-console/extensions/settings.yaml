@@ -1,7 +1,7 @@
 apiVersion: v1alpha1
 kind: Setting
 metadata:
-  name: ai-chat-console-settings
+  name: halo-ai-console-settings
 spec:
   forms:
     - group: basic

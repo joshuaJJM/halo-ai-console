@@ -7,13 +7,13 @@
   const axios = window.HaloApiClient && window.HaloApiClient.axiosInstance;
 
   const API = "/apis/console.api.aifoundation.halo.run/v1alpha1";
-  const CHAT_API = "/apis/console.api.ai-chat-console.halo.run/v1alpha1";
-  const STORE_KEY = "halo-ai-chat-console:sessions";
-  const SELECTED_KEY = "halo-ai-chat-console:selected";
-  const SETTINGS_KEY = "halo-ai-chat-console:settings";
-  const LOG_KEY = "halo-ai-chat-console:call-logs";
-  const SIDEBAR_KEY = "halo-ai-chat-console:sidebar-collapsed";
-  const MIGRATION_DISMISSED_KEY = "halo-ai-chat-console:legacy-migration-dismissed";
+  const CHAT_API = "/apis/console.api.halo-ai-console.halo.run/v1alpha1";
+  const STORE_KEY = "halo-ai-console:sessions";
+  const SELECTED_KEY = "halo-ai-console:selected";
+  const SETTINGS_KEY = "halo-ai-console:settings";
+  const LOG_KEY = "halo-ai-console:call-logs";
+  const SIDEBAR_KEY = "halo-ai-console:sidebar-collapsed";
+  const MIGRATION_DISMISSED_KEY = "halo-ai-console:legacy-migration-dismissed";
   const EMPTY_TITLE = "新的聊天";
 
   function uid(prefix) {
@@ -801,7 +801,7 @@
   };
 
   const ChatView = {
-    name: "AiChatConsoleView",
+    name: "HaloAiConsoleView",
     setup() {
       const sessions = ref(loadSessions());
       const selectedId = ref(localStorage.getItem(SELECTED_KEY) || "");
@@ -1904,7 +1904,7 @@
       const Loading = components.VLoading || "span";
 
       function renderMessage(message) {
-        return h("article", { key: message.id || `${message.role}-${message.createdAt}`, class: ["ai-chat-message", message.role] }, [
+        return h("article", { key: message.id || `${message.role}-${message.createdAt}`, class: ["halo-ai-message", message.role] }, [
           h("div", { class: "avatar" }, message.role === "user" ? "你" : "AI"),
           h("div", { class: "bubble" }, [
             message.streaming ? h("div", { class: "streaming-pill" }, "生成中") : null,
@@ -1968,7 +1968,7 @@
           onClick: toggleSidebar,
         }, sidebarCollapsed.value ? "›" : "‹"),
         h("aside", { class: "ai-chat-sidebar" }, [
-          h("div", { class: "brand" }, [h("strong", "AI Chat"), h("span", "Console Assistant")]),
+          h("div", { class: "brand" }, [h("strong", "Halo AI"), h("span", "Console Assistant")]),
           h("div", { class: "sidebar-actions" }, [
             h(Button, { type: "primary", size: "sm", onClick: newSession }, () => "新建聊天"),
             h(Button, { size: "sm", onClick: clearContext }, () => "清除上下文"),
@@ -1984,7 +1984,7 @@
           h("small", { class: "search-hint" }, "全局搜索当前用户的对话标题、最近消息、会话标签和收藏标记"),
           h("div", { class: "ai-chat-history" }, filteredSessions.value.map((session) =>
             h("div", {
-              class: ["ai-chat-session", session.id === selectedId.value && "is-active"],
+              class: ["halo-ai-session", session.id === selectedId.value && "is-active"],
               onClick: () => { selectedId.value = session.id; },
             }, [
               renamingId.value === session.id
@@ -2037,7 +2037,7 @@
             h("button", { type: "button", onClick: () => { sessionQuery.value = tag; } }, `#${tag}`)
           )) : null,
           error.value && h("div", { class: "ai-chat-error" }, error.value),
-          h("section", { ref: chatEl, class: "ai-chat-messages", onScroll: handleMessagesScroll }, (showFavoritesOnly.value ? favoriteMessages.value.length : current.value.messages.length)
+          h("section", { ref: chatEl, class: "halo-ai-messages", onScroll: handleMessagesScroll }, (showFavoritesOnly.value ? favoriteMessages.value.length : current.value.messages.length)
             ? [
               !showFavoritesOnly.value && hiddenMessageCount.value > 0
                 ? h("button", { class: "load-older", onClick: loadOlderMessages }, `加载更早的 ${Math.min(Number(settings.value.olderBatchSize) || 40, hiddenMessageCount.value)} 条消息`)
@@ -2070,7 +2070,7 @@
   };
 
   const SettingsView = {
-    name: "AiChatConsoleSettings",
+    name: "HaloAiConsoleSettings",
     setup() {
       const settings = ref(loadSettings());
       const logs = ref(loadCallLogs());
@@ -2199,10 +2199,10 @@
 .brand{display:grid;gap:2px;padding:4px 2px 8px}.brand strong{font-size:18px}.brand span{font-size:12px;color:#64748b}
 .sidebar-actions{display:grid;grid-template-columns:1fr auto auto;gap:8px}
 .ai-chat-history{min-height:0;display:flex;flex-direction:column;gap:8px;overflow:auto;padding-right:2px}
-.ai-chat-session{border:1px solid transparent;background:transparent;text-align:left;border-radius:16px;padding:12px;display:grid;gap:5px;cursor:pointer;transition:.16s ease}
-.ai-chat-session:hover,.ai-chat-session.is-active{border-color:#d7dee9;background:#fff;box-shadow:0 10px 28px rgba(15,23,42,.07)}
-.ai-chat-session span{font-size:14px;font-weight:650;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.ai-chat-session small{font-size:11px;color:#64748b}.session-actions{display:flex;gap:10px;align-items:center}.ai-chat-session b{font-size:11px;color:#2563eb;font-weight:500}.ai-chat-session b.danger{color:#ef4444}.session-rename{width:100%;border:1px solid #bfdbfe;border-radius:10px;padding:6px 8px;font-size:13px;outline:none;background:#fff}
+.halo-ai-session{border:1px solid transparent;background:transparent;text-align:left;border-radius:16px;padding:12px;display:grid;gap:5px;cursor:pointer;transition:.16s ease}
+.halo-ai-session:hover,.halo-ai-session.is-active{border-color:#d7dee9;background:#fff;box-shadow:0 10px 28px rgba(15,23,42,.07)}
+.halo-ai-session span{font-size:14px;font-weight:650;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.halo-ai-session small{font-size:11px;color:#64748b}.session-actions{display:flex;gap:10px;align-items:center}.halo-ai-session b{font-size:11px;color:#2563eb;font-weight:500}.halo-ai-session b.danger{color:#ef4444}.session-rename{width:100%;border:1px solid #bfdbfe;border-radius:10px;padding:6px 8px;font-size:13px;outline:none;background:#fff}
 .session-search{width:100%;height:36px;border:1px solid #d7dee8;border-radius:999px;padding:0 12px;background:#fff;outline:none;font-size:13px}.session-search:focus{border-color:#93c5fd;box-shadow:0 0 0 3px rgba(59,130,246,.12)}.search-hint{margin-top:-8px;color:#94a3b8;font-size:11px;line-height:1.4}
 .ai-chat-main{grid-column:2;min-width:0;min-height:0;overflow:hidden;display:grid;grid-template-rows:auto auto auto minmax(0,1fr) auto}
 .ai-chat-toolbar{grid-row:1;min-height:66px;border-bottom:1px solid #e6eaf0;background:rgba(255,255,255,.82);backdrop-filter:blur(10px);display:flex;align-items:center;gap:12px;padding:12px 18px}
@@ -2212,9 +2212,9 @@
 .context-meter:disabled{opacity:.58;cursor:wait}.context-meter strong,.context-meter span{grid-area:1/1}.context-meter strong{width:48px;height:48px;border-radius:999px;background:#fff;display:flex;align-items:center;justify-content:center;font-size:12px;color:#0f172a;padding-top:0}.context-meter span{align-self:end;justify-self:center;margin-bottom:8px;font-size:9px;color:#64748b;transform:translateY(10px)}
 .ai-chat-error{grid-row:3;margin:14px 20px 0;padding:12px 14px;border:1px solid #fecaca;background:#fff1f2;color:#b91c1c;border-radius:16px}
 .conversation-tags{grid-row:2;display:flex;gap:8px;flex-wrap:wrap;padding:10px 20px 0}.conversation-tags button{border:1px solid #bfdbfe;background:#eff6ff;color:#1d4ed8;border-radius:999px;padding:4px 10px;font-size:12px;cursor:pointer}
-.ai-chat-messages{grid-row:4;min-height:0;overflow:auto;padding:24px 22px;scroll-padding-bottom:24px;display:flex;flex-direction:column;gap:18px;overscroll-behavior:contain}
+.halo-ai-messages{grid-row:4;min-height:0;overflow:auto;padding:24px 22px;scroll-padding-bottom:24px;display:flex;flex-direction:column;gap:18px;overscroll-behavior:contain}
 .load-older{align-self:center;border:1px solid #d7dee8;background:#fff;color:#64748b;border-radius:999px;padding:7px 14px;font-size:12px;cursor:pointer;box-shadow:0 8px 18px rgba(15,23,42,.06)}.load-older:hover{border-color:#bfdbfe;color:#2563eb}
-.ai-chat-message{display:grid;grid-template-columns:38px minmax(0,1fr);gap:10px;align-items:flex-start}.ai-chat-message.user{grid-template-columns:minmax(0,1fr) 38px}.ai-chat-message.user .avatar{grid-column:2}.ai-chat-message.user .bubble{grid-column:1;grid-row:1;justify-self:end}
+.halo-ai-message{display:grid;grid-template-columns:38px minmax(0,1fr);gap:10px;align-items:flex-start}.halo-ai-message.user{grid-template-columns:minmax(0,1fr) 38px}.halo-ai-message.user .avatar{grid-column:2}.halo-ai-message.user .bubble{grid-column:1;grid-row:1;justify-self:end}
 .avatar{width:34px;height:34px;border-radius:999px;background:#111827;color:#fff;display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:700;box-shadow:0 8px 20px rgba(15,23,42,.14)}
 .user .avatar{background:#2563eb}
 .bubble{max-width:min(860px,82%);border:1px solid #e5e9f0;background:rgba(255,255,255,.96);border-radius:22px;padding:15px 17px;box-shadow:0 14px 34px rgba(15,23,42,.08);overflow:hidden}
@@ -2240,22 +2240,22 @@
 .composer-actions{display:flex;align-items:center;justify-content:space-between;gap:12px}.file-button{font-size:13px;color:#2563eb;cursor:pointer}.file-button input{display:none}.hint{font-size:12px;color:#94a3b8;margin-right:auto}
 .message-actions{display:flex;gap:8px;flex-wrap:wrap;margin-top:10px}.message-actions button{border:1px solid #d7dee8;background:#fff;border-radius:999px;padding:4px 9px;font-size:12px;color:#475569;cursor:pointer}.message-actions button:disabled{opacity:.45;cursor:not-allowed}.token-stats{margin-top:8px;font-size:11px;color:#94a3b8}.message-edit textarea{width:100%;min-height:92px;border:1px solid #d7dee8;border-radius:14px;padding:10px;font:inherit;resize:vertical;background:#fff;color:#0f172a}
 .drop-mask{position:fixed;inset:0;z-index:10000;background:rgba(37,99,235,.12);border:3px dashed #60a5fa;display:flex;align-items:center;justify-content:center;font-size:22px;font-weight:700;color:#1d4ed8;pointer-events:none}.ai-chat-settings{min-height:calc(100vh - 64px);background:#f1f5f9;padding:24px;display:grid;gap:18px;align-content:start}.settings-panel{max-width:1080px;background:#fff;border:1px solid #e2e8f0;border-radius:18px;padding:20px;box-shadow:0 12px 28px rgba(15,23,42,.06)}.settings-panel h1,.settings-panel h2{margin:0 0 16px}.settings-panel label{display:grid;gap:6px;margin:12px 0}.settings-panel input{height:38px;border:1px solid #d7dee8;border-radius:10px;padding:0 10px}.settings-panel textarea{min-height:120px;border:1px solid #d7dee8;border-radius:12px;padding:10px;resize:vertical;background:#fff;color:#0f172a}.readonly-note{border:1px solid #dbe3ee;background:#f8fafc;border-radius:12px;padding:10px 12px;color:#475569}.settings-title-row{display:flex;align-items:center;justify-content:space-between;gap:12px}.settings-actions{display:flex;gap:8px;align-items:center}.settings-error{margin:0 0 10px;color:#b91c1c;background:#fff1f2;border:1px solid #fecaca;border-radius:12px;padding:9px 11px}.call-log-list{display:grid;gap:8px}.call-log-item{display:grid;grid-template-columns:1.1fr 1.2fr 1.3fr 1.3fr;gap:8px;border:1px solid #edf2f7;border-radius:12px;padding:10px}.call-log-item small{grid-column:1/-1;color:#64748b}
-@media (max-width: 900px){.ai-chat-shell{height:100dvh;max-height:100dvh;min-height:min(520px,100dvh);grid-template-columns:1fr}.ai-chat-sidebar{display:none}.sidebar-toggle{left:0;top:44%;width:24px;height:48px}.ai-chat-main{grid-column:1}.bubble{max-width:100%}.ai-chat-toolbar{display:grid;grid-template-columns:96px minmax(0,1fr) 48px;align-items:center;gap:8px;padding:10px 12px 10px 34px}.ai-chat-toolbar .title{grid-column:1/-1;width:100%;min-width:0}.ai-chat-toolbar select{max-width:none;width:100%;min-width:0}.ai-chat-toolbar .context-meter{width:46px;height:46px}.ai-chat-toolbar .context-meter strong{width:40px;height:40px;font-size:11px}.ai-chat-toolbar button:not(.context-meter){grid-column:1/-1;justify-self:start}.ai-chat-messages{padding:16px 12px;scroll-padding-bottom:16px}.ai-chat-composer{padding:9px 12px 10px}.ai-chat-composer textarea{height:88px;min-height:88px;max-height:88px;border-radius:16px}.composer-actions{display:grid;grid-template-columns:auto minmax(0,1fr) auto;gap:8px}.hint{font-size:11px;white-space:normal}.ai-chat-message,.ai-chat-message.user{grid-template-columns:32px minmax(0,1fr)}.ai-chat-message.user .avatar{grid-column:1}.ai-chat-message.user .bubble{grid-column:2}}
+@media (max-width: 900px){.ai-chat-shell{height:100dvh;max-height:100dvh;min-height:min(520px,100dvh);grid-template-columns:1fr}.ai-chat-sidebar{display:none}.sidebar-toggle{left:0;top:44%;width:24px;height:48px}.ai-chat-main{grid-column:1}.bubble{max-width:100%}.ai-chat-toolbar{display:grid;grid-template-columns:96px minmax(0,1fr) 48px;align-items:center;gap:8px;padding:10px 12px 10px 34px}.ai-chat-toolbar .title{grid-column:1/-1;width:100%;min-width:0}.ai-chat-toolbar select{max-width:none;width:100%;min-width:0}.ai-chat-toolbar .context-meter{width:46px;height:46px}.ai-chat-toolbar .context-meter strong{width:40px;height:40px;font-size:11px}.ai-chat-toolbar button:not(.context-meter){grid-column:1/-1;justify-self:start}.halo-ai-messages{padding:16px 12px;scroll-padding-bottom:16px}.ai-chat-composer{padding:9px 12px 10px}.ai-chat-composer textarea{height:88px;min-height:88px;max-height:88px;border-radius:16px}.composer-actions{display:grid;grid-template-columns:auto minmax(0,1fr) auto;gap:8px}.hint{font-size:11px;white-space:normal}.halo-ai-message,.halo-ai-message.user{grid-template-columns:32px minmax(0,1fr)}.halo-ai-message.user .avatar{grid-column:1}.halo-ai-message.user .bubble{grid-column:2}}
 @media (max-width: 560px){.ai-chat-toolbar{grid-template-columns:84px minmax(0,1fr);padding-left:32px}.ai-chat-toolbar .context-meter{grid-column:2;justify-self:end}.ai-chat-toolbar button:not(.context-meter){grid-column:1/-1}.context-meter{width:42px;height:42px}.composer-actions{grid-template-columns:1fr auto}.composer-actions .hint{grid-column:1/-1;order:3}.file-button{align-self:center}.ai-chat-composer textarea{font-size:15px}.message-actions button{font-size:11px;padding:4px 8px}}
 `;
 
-  window["ai-chat-console"] = definePlugin({
+  window["halo-ai-console"] = definePlugin({
     routes: [
       {
         parentName: "Root",
         route: {
-          path: "/ai-chat-console",
-          name: "AiChatConsole",
+          path: "/halo-ai-console",
+          name: "HaloAiConsole",
           component: ChatView,
           meta: {
             title: "AI 聊天",
             searchable: true,
-            permissions: ["plugin:ai-chat-console:view"],
+            permissions: ["plugin:halo-ai-console:view"],
             menu: {
               name: "AI 聊天",
               group: "tool",
@@ -2268,13 +2268,13 @@
       {
         parentName: "Root",
         route: {
-          path: "/ai-chat-console/settings",
-          name: "AiChatConsoleSettings",
+          path: "/halo-ai-console/settings",
+          name: "HaloAiConsoleSettings",
           component: SettingsView,
           meta: {
             title: "AI 聊天设置",
             searchable: true,
-            permissions: ["plugin:ai-chat-console:view"],
+            permissions: ["plugin:halo-ai-console:view"],
             menu: {
               name: "AI 聊天设置",
               group: "tool",

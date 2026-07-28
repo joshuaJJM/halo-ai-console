@@ -3,7 +3,7 @@ package run.halo.aichatconsole.extension;
 import run.halo.app.extension.AbstractExtension;
 import run.halo.app.extension.GVK;
 
-@GVK(group = "ai-chat-console.halo.run", version = "v1alpha1", kind = "AiChatImageCache", plural = "ai-chat-image-caches", singular = "ai-chat-image-cache")
+@GVK(group = "halo-ai-console.halo.run", version = "v1alpha1", kind = "AiChatImageCache", plural = "halo-ai-image-caches", singular = "halo-ai-image-cache")
 public class AiChatImageCache extends AbstractExtension {
   private ImageCacheSpec spec = new ImageCacheSpec();
 

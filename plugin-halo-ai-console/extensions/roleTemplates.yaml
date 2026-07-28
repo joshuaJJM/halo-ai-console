@@ -1,19 +1,19 @@
 apiVersion: v1alpha1
 kind: Role
 metadata:
-  name: role-template-ai-chat-console-view-and-manage-own
+  name: role-template-halo-ai-console-view-and-manage-own
   labels:
     halo.run/role-template: "true"
   annotations:
-    rbac.authorization.halo.run/module: "AI Chat Console"
-    rbac.authorization.halo.run/display-name: "AI Chat"
+    rbac.authorization.halo.run/module: "Halo AI Console"
+    rbac.authorization.halo.run/display-name: "Halo AI"
     rbac.authorization.halo.run/ui-permissions: |
-      ["plugin:ai-chat-console:view","plugin:ai-chat-console:manage-own"]
+      ["plugin:halo-ai-console:view","plugin:halo-ai-console:manage-own"]
 rules:
   - apiGroups: ["console.api.aifoundation.halo.run"]
     resources: ["model-options", "models", "models/*"]
     verbs: ["get", "list", "create"]
-  - apiGroups: ["console.api.ai-chat-console.halo.run"]
+  - apiGroups: ["console.api.halo-ai-console.halo.run"]
     resources:
       ["sessions-with-messages", "sessions", "call-logs", "settings", "global-settings",
        "assets/dompurify.min.js", "image-caches", "attachments/upload", "jobs", "jobs/*", "jobs/chat", "jobs/image", "jobs/cancel"]
@@ -25,36 +25,36 @@ rules:
 apiVersion: v1alpha1
 kind: Role
 metadata:
-  name: role-template-ai-chat-console-audit
+  name: role-template-halo-ai-console-audit
   labels:
     halo.run/role-template: "true"
   annotations:
     rbac.authorization.halo.run/dependencies: |
-      ["role-template-ai-chat-console-view-and-manage-own"]
-    rbac.authorization.halo.run/module: "AI Chat Console"
+      ["role-template-halo-ai-console-view-and-manage-own"]
+    rbac.authorization.halo.run/module: "Halo AI Console"
     rbac.authorization.halo.run/display-name: "View own AI audit logs"
     rbac.authorization.halo.run/ui-permissions: |
-      ["plugin:ai-chat-console:audit"]
+      ["plugin:halo-ai-console:audit"]
 rules:
-  - apiGroups: ["console.api.ai-chat-console.halo.run"]
+  - apiGroups: ["console.api.halo-ai-console.halo.run"]
     resources: ["audit-logs"]
     verbs: ["get", "list"]
 ---
 apiVersion: v1alpha1
 kind: Role
 metadata:
-  name: role-template-ai-chat-console-admin
+  name: role-template-halo-ai-console-admin
   labels:
     halo.run/role-template: "true"
   annotations:
     rbac.authorization.halo.run/dependencies: |
-      ["role-template-ai-chat-console-view-and-manage-own"]
-    rbac.authorization.halo.run/module: "AI Chat Console"
-    rbac.authorization.halo.run/display-name: "Manage AI Chat Console"
+      ["role-template-halo-ai-console-view-and-manage-own"]
+    rbac.authorization.halo.run/module: "Halo AI Console"
+    rbac.authorization.halo.run/display-name: "Manage Halo AI Console"
     rbac.authorization.halo.run/ui-permissions: |
-      ["plugin:ai-chat-console:admin","plugin:ai-chat-console:call-log-all"]
+      ["plugin:halo-ai-console:admin","plugin:halo-ai-console:call-log-all"]
 rules:
-  - apiGroups: ["console.api.ai-chat-console.halo.run"]
+  - apiGroups: ["console.api.halo-ai-console.halo.run"]
     resources:
       ["call-logs/all", "audit-logs/all", "migration/legacy", "migration/legacy/status", "global-settings"]
     verbs: ["get", "list", "create", "update", "delete"]

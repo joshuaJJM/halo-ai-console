@@ -5,7 +5,7 @@ import java.util.List;
 import run.halo.app.extension.AbstractExtension;
 import run.halo.app.extension.GVK;
 
-@GVK(group = "ai-chat-console.halo.run", version = "v1alpha1", kind = "AiChatMessage", plural = "ai-chat-messages", singular = "ai-chat-message")
+@GVK(group = "halo-ai-console.halo.run", version = "v1alpha1", kind = "AiChatMessage", plural = "halo-ai-messages", singular = "halo-ai-message")
 public class AiChatMessage extends AbstractExtension {
   private MessageSpec spec = new MessageSpec();
 

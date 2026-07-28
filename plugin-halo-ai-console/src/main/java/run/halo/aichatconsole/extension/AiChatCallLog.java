@@ -3,7 +3,7 @@ package run.halo.aichatconsole.extension;
 import run.halo.app.extension.AbstractExtension;
 import run.halo.app.extension.GVK;
 
-@GVK(group = "ai-chat-console.halo.run", version = "v1alpha1", kind = "AiChatCallLog", plural = "ai-chat-call-logs", singular = "ai-chat-call-log")
+@GVK(group = "halo-ai-console.halo.run", version = "v1alpha1", kind = "AiChatCallLog", plural = "halo-ai-call-logs", singular = "halo-ai-call-log")
 public class AiChatCallLog extends AbstractExtension {
   private CallLogSpec spec = new CallLogSpec();
 

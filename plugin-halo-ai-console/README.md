@@ -6,7 +6,7 @@ Halo AI Console is a Halo Console plugin backed by AI Foundation. It adds a mode
 
 ## Features
 
-- Adds an `AI Chat` console route and a settings / call-log route.
+- Adds a `Halo AI` console route and a settings / call-log route.
 - Uses AI Foundation console APIs for model options, chat streaming, image generation, and image streaming when the installed AI Foundation version exposes it.
 - `Default` model selection means the default model of the requested capability: language / multimodal for chat, image generation for `/image` or image mode.
 - Administrators can configure global model policy in the Halo plugin settings: keep capability defaults, specify model names, and restrict the list of models users may select. The backend also rejects chat/image jobs that use a model outside the allow-list.
@@ -25,9 +25,9 @@ Halo AI Console is a Halo Console plugin backed by AI Foundation. It adds a mode
 
 The plugin installs these role templates:
 
-- `AI Chat`: can open and use the AI chat UI, manage its own sessions/messages/favorites, upload images through the plugin proxy, view its own call logs, and save personal rendering/context settings.
+- `Halo AI`: can open and use the AI chat UI, manage its own sessions/messages/favorites, upload images through the plugin proxy, view its own call logs, and save personal rendering/context settings.
 - `View own AI audit logs`: can view the audit-log view for the current user.
-- `Manage AI Chat Console`: can read all users' logs, run legacy migration, and access admin-only console endpoints. All-log and migration endpoints also perform backend permission checks in addition to Halo RBAC.
+- `Manage Halo AI Console`: can read all users' logs, run legacy migration, and access admin-only console endpoints. All-log and migration endpoints also perform backend permission checks in addition to Halo RBAC.
 - Global plugin settings are exposed through Halo's plugin settings page via `settingName` / `configMapName` and should be managed by users who already have Halo plugin management permission.
 
 ## APIs Used
@@ -35,11 +35,11 @@ The plugin installs these role templates:
 - AI Foundation models: `/apis/console.api.aifoundation.halo.run/v1alpha1/model-options?enabled=true`
 - AI Foundation chat stream: tries `/apis/console.api.aifoundation.halo.run/v1alpha1/models/{model}/chat/ui-message/stream`, then falls back to `/test-chat/ui-message/stream` when the installed AI Foundation only exposes console test routes.
 - AI Foundation image generation is consumed by a backend job. For the locally verified AI Foundation `1.0.0-beta.4`, the available console endpoint is non-streaming `/test-image-generation`; the plugin uses that first and can fall back to non-streaming `/image-generation` if a later AI Foundation exposes it.
-- Plugin attachment upload proxy: `/apis/console.api.ai-chat-console.halo.run/v1alpha1/attachments/upload`
-- Plugin global model/settings policy: `/apis/console.api.ai-chat-console.halo.run/v1alpha1/global-settings`
-- Bundled DOMPurify asset: `/apis/console.api.ai-chat-console.halo.run/v1alpha1/assets/dompurify.min.js`
-- Legacy storage migration: `/apis/console.api.ai-chat-console.halo.run/v1alpha1/migration/legacy/status` and `/migration/legacy`
-- Plugin storage: `/apis/console.api.ai-chat-console.halo.run/v1alpha1/*`
+- Plugin attachment upload proxy: `/apis/console.api.halo-ai-console.halo.run/v1alpha1/attachments/upload`
+- Plugin global model/settings policy: `/apis/console.api.halo-ai-console.halo.run/v1alpha1/global-settings`
+- Bundled DOMPurify asset: `/apis/console.api.halo-ai-console.halo.run/v1alpha1/assets/dompurify.min.js`
+- Legacy storage migration: `/apis/console.api.halo-ai-console.halo.run/v1alpha1/migration/legacy/status` and `/migration/legacy`
+- Plugin storage: `/apis/console.api.halo-ai-console.halo.run/v1alpha1/*`
 
 ## Notes
 
@@ -57,7 +57,7 @@ The plugin installs these role templates:
 
 Current plugin version: `0.2.3`.
 
-Local packaged jar: `dist/ai-chat-console-0.2.3.jar`.
+Local packaged jar: `dist/halo-ai-console-0.2.3.jar`.
 
 Historical packaged jars are committed under the repository `dist/` directory for quick download and regression comparison.
 
