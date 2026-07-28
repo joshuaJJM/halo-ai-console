@@ -10,8 +10,8 @@ spec:
   pluginDependencies:
     ai-foundation: "*"
   author:
-    name: "Codex"
-    website: "https://www.halo.run"
+    name: "joshuaJJM"
+    website: "https://github.com/joshuaJJM/halo-ai-console"
   logo: "icon.svg"
   settingName: "halo-ai-console-settings"
   configMapName: "halo-ai-console-config"
@@ -20,4 +20,4 @@ spec:
   license:
     - name: "MIT"
       url: "https://opensource.org/license/mit"
-  version: "0.2.3"
+  version: "0.2.4"

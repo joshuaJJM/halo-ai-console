@@ -2,7 +2,9 @@
 
 AI-powered chat, image generation, audit, and model management for Halo Console.
 
-Halo AI Console is a Halo Console plugin built on top of AI Foundation. It adds a modern AI workspace to the Halo admin console, including streaming chat, image generation, multimodal input, persisted conversation history, context management, model policy, and audit logs.
+Halo AI Console is a community-maintained Halo Console plugin built on top of AI Foundation. It adds a modern AI workspace to the Halo admin console, including streaming chat, image generation, multimodal input, persisted conversation history, context management, model policy, and audit logs.
+
+This project is not an official Halo project and does not use the official Halo logo or branding assets.
 
 ## Highlights
 
@@ -20,7 +22,7 @@ Halo AI Console is a Halo Console plugin built on top of AI Foundation. It adds 
 
 The plugin source lives in [`plugin-halo-ai-console`](plugin-halo-ai-console/).
 
-Current plugin version: `0.2.3`.
+Current plugin version: `0.2.4`.
 
 ## Requirements
 
@@ -35,12 +37,22 @@ Current plugin version: `0.2.3`.
 Packaged artifacts are committed under:
 
 ```text
-dist/halo-ai-console-0.2.3.jar
+dist/halo-ai-console-0.2.4.jar
 ```
 
 The `dist/` directory keeps historical packaged jars for quick download and regression comparison.
 
 For implementation details, permissions, storage behavior, and API notes, see [`plugin-halo-ai-console/README.md`](plugin-halo-ai-console/README.md).
+
+## Privacy
+
+Halo AI Console stores conversation snapshots, personal settings, job records, image cache metadata, usage counters, and audit logs in Halo-managed ConfigMaps. When a user sends a chat, image, or file request, the relevant message content and attachment references are forwarded to the AI Foundation model selected by the user or administrator. The final third-party model provider depends on the AI Foundation configuration of the Halo installation.
+
+The plugin does not include telemetry, analytics SDKs, external CDN scripts, or hard-coded third-party API keys. Administrators should review their AI Foundation model providers and Halo attachment storage policies before enabling the plugin for other users.
+
+## Support
+
+Report issues at [GitHub Issues](https://github.com/joshuaJJM/halo-ai-console/issues).
 
 ## License
 

@@ -15,9 +15,12 @@ rules:
     verbs: ["get", "list", "create"]
   - apiGroups: ["console.api.halo-ai-console.halo.run"]
     resources:
-      ["sessions-with-messages", "sessions", "call-logs", "settings", "global-settings",
+      ["sessions-with-messages", "sessions", "call-logs", "settings",
        "assets/dompurify.min.js", "image-caches", "attachments/upload", "jobs", "jobs/*", "jobs/chat", "jobs/image", "jobs/cancel"]
     verbs: ["get", "list", "create", "update", "delete"]
+  - apiGroups: ["console.api.halo-ai-console.halo.run"]
+    resources: ["global-settings"]
+    verbs: ["get", "list"]
   - apiGroups: ["console.api.storage.halo.run"]
     resources: ["attachments"]
     verbs: ["create"]

@@ -2,7 +2,9 @@
 
 AI-powered chat, image generation, audit, and model management for Halo Console.
 
-Halo AI Console is a Halo Console plugin backed by AI Foundation. It adds a modern AI workspace to the Halo admin console, including streaming chat, image generation, multimodal input, persisted conversation history, context management, model policy, and audit logs.
+Halo AI Console is a community-maintained Halo Console plugin backed by AI Foundation. It adds a modern AI workspace to the Halo admin console, including streaming chat, image generation, multimodal input, persisted conversation history, context management, model policy, and audit logs.
+
+This project is not an official Halo project and does not use the official Halo logo or branding assets.
 
 ## Features
 
@@ -30,6 +32,15 @@ The plugin installs these role templates:
 - `Manage Halo AI Console`: can read all users' logs, run legacy migration, and access admin-only console endpoints. All-log and migration endpoints also perform backend permission checks in addition to Halo RBAC.
 - Global plugin settings are exposed through Halo's plugin settings page via `settingName` / `configMapName` and should be managed by users who already have Halo plugin management permission.
 
+## Privacy and Data Processing
+
+- Conversation snapshots, message content, user settings, job records, image cache metadata, usage counters, and audit logs are stored in Halo-managed ConfigMaps.
+- Chat, image, and file inputs are forwarded to AI Foundation and then to the model provider configured by the Halo administrator. The plugin itself does not hard-code provider credentials.
+- Uploaded images pass through the plugin backend proxy and are then stored by the configured Halo attachment storage.
+- Audit logs may contain user identifiers, model names, token estimates, timestamps, request duration, IP address, browser, operating system, operation status, and error messages.
+- The plugin does not include telemetry, analytics SDKs, external CDN scripts, or hard-coded third-party API keys.
+- Administrators should review the enabled AI Foundation providers, retention settings, and attachment storage policy before granting the plugin roles to other users.
+
 ## APIs Used
 
 - AI Foundation models: `/apis/console.api.aifoundation.halo.run/v1alpha1/model-options?enabled=true`
@@ -55,11 +66,15 @@ The plugin installs these role templates:
 
 ## Build Artifact
 
-Current plugin version: `0.2.3`.
+Current plugin version: `0.2.4`.
 
-Local packaged jar: `dist/halo-ai-console-0.2.3.jar`.
+Local packaged jar: `dist/halo-ai-console-0.2.4.jar`.
 
 Historical packaged jars are committed under the repository `dist/` directory for quick download and regression comparison.
+
+## Support
+
+Report issues at [GitHub Issues](https://github.com/joshuaJJM/halo-ai-console/issues).
 
 ## Requirements
 
