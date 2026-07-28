@@ -32,13 +32,13 @@ Current plugin version: `0.2.3`.
 
 ## Packaging
 
-Local packaging currently produces:
+Packaged artifacts are committed under:
 
 ```text
 dist/ai-chat-console-0.2.3.jar
 ```
 
-Build artifacts are not committed to this repository. Use GitHub releases for published jars.
+The `dist/` directory keeps historical packaged jars for quick download and regression comparison.
 
 For implementation details, permissions, storage behavior, and API notes, see [`plugin-ai-chat-console/README.md`](plugin-ai-chat-console/README.md).
 

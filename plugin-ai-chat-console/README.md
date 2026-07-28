@@ -59,7 +59,7 @@ Current plugin version: `0.2.3`.
 
 Local packaged jar: `dist/ai-chat-console-0.2.3.jar`.
 
-Build artifacts are intentionally excluded from Git history. Publish release jars through GitHub releases.
+Historical packaged jars are committed under the repository `dist/` directory for quick download and regression comparison.
 
 ## Requirements
 

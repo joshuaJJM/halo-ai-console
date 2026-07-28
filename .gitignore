@@ -6,9 +6,10 @@
 /halo-*.jar
 /*-backup-*.zip
 
-# Build artifacts
-/dist/
+# Temporary duplicate folders
 /dist - 副本/
+
+# Build scratch files
 *.class
 *.log
 
@@ -17,4 +18,3 @@
 Thumbs.db
 .idea/
 .vscode/
-
