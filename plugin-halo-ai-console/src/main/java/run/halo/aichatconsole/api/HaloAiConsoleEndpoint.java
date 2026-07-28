@@ -264,24 +264,37 @@ public class HaloAiConsoleEndpoint implements CustomEndpoint {
       var owner = tuple.getT1();
       var deleteAuditLogs = Boolean.TRUE.equals(booleanValue(tuple.getT2().get("allowUserAuditLogDeletion")));
       return cancelOwnerJobs(owner)
-        .then(Mono.zip(
-          deleteOwnedConfigMaps(SESSION_CONFIG_MAP_PREFIX + safeName("owner", owner) + "-"),
-          deleteOwnedConfigMaps(JOB_CONFIG_MAP_PREFIX + safeName("owner", owner) + "-"),
-          deleteOwnedConfigMaps(USAGE_CONFIG_MAP_PREFIX + safeName("owner", owner) + "-"),
-          deleteOwnedLogMaps(owner, deleteAuditLogs),
-          clearOwnStore(owner, deleteAuditLogs)
-        ))
-        .map(counts -> {
+        .then(Flux.concat(
+          deletionStep("sessions", deleteOwnedConfigMaps(SESSION_CONFIG_MAP_PREFIX + safeName("owner", owner) + "-")),
+          deletionStep("jobs", deleteOwnedConfigMaps(JOB_CONFIG_MAP_PREFIX + safeName("owner", owner) + "-")),
+          deletionStep("usage", deleteOwnedConfigMaps(USAGE_CONFIG_MAP_PREFIX + safeName("owner", owner) + "-")),
+          deletionStep("auditLogs", deleteOwnedLogMaps(owner, deleteAuditLogs)),
+          deletionStep("personalStore", clearOwnStore(owner, deleteAuditLogs))
+        ).collectList())
+        .map(steps -> {
+          var failures = steps.stream()
+            .filter(step -> !Boolean.TRUE.equals(step.get("success")))
+            .collect(Collectors.toList());
+          var deleted = steps.stream()
+            .mapToInt(step -> intValue(step.get("deleted")) == null ? 0 : intValue(step.get("deleted")))
+            .sum();
           var result = new LinkedHashMap<String, Object>();
-          result.put("sessionsDeleted", counts.getT1());
-          result.put("jobsDeleted", counts.getT2());
-          result.put("usageRecordsDeleted", counts.getT3());
-          result.put("auditLogsDeleted", counts.getT4() + counts.getT5());
+          result.put("success", failures.isEmpty());
+          result.put("partialFailure", !failures.isEmpty() && failures.size() < steps.size());
+          result.put("sessionsDeleted", deletedCount(steps, "sessions"));
+          result.put("jobsDeleted", deletedCount(steps, "jobs"));
+          result.put("usageRecordsDeleted", deletedCount(steps, "usage"));
+          result.put("auditLogsDeleted", deletedCount(steps, "auditLogs") + deletedCount(steps, "personalStore"));
           result.put("auditLogsRetained", !deleteAuditLogs);
           result.put("attachmentsDeleted", 0);
-          result.put("message", deleteAuditLogs
-            ? "Personal chat data and audit logs were deleted. Halo attachments must be deleted separately."
-            : "Personal chat data was deleted. Audit logs were retained by administrator policy, and Halo attachments must be deleted separately.");
+          result.put("deletedCount", deleted);
+          result.put("steps", steps);
+          result.put("failures", failures);
+          result.put("message", failures.isEmpty()
+            ? (deleteAuditLogs
+              ? "Personal chat data and audit logs were deleted. Halo attachments were not deleted and must be removed separately."
+              : "Personal chat data was deleted. Audit logs were retained by administrator policy. Halo attachments were not deleted and must be removed separately.")
+            : "Some personal data could not be deleted. Review failures and retry after resolving the reported errors. Halo attachments were not deleted.");
           return result;
         })
         .flatMap(result -> ServerResponse.ok().bodyValue(result));
@@ -1992,6 +2005,33 @@ public class HaloAiConsoleEndpoint implements CustomEndpoint {
       )
       .flatMap(configMap -> client.delete(configMap).thenReturn(1))
       .reduce(0, Integer::sum);
+  }
+
+  private Mono<Map<String, Object>> deletionStep(String resource, Mono<Integer> deletion) {
+    return deletion
+      .<Map<String, Object>>map(count -> {
+        Map<String, Object> result = new LinkedHashMap<>();
+        result.put("resource", resource);
+        result.put("success", true);
+        result.put("deleted", count);
+        return result;
+      })
+      .onErrorResume(error -> {
+        var result = new LinkedHashMap<String, Object>();
+        result.put("resource", resource);
+        result.put("success", false);
+        result.put("deleted", 0);
+        result.put("errorType", error.getClass().getSimpleName());
+        result.put("error", limitString(error.getMessage(), 500));
+        return Mono.just(result);
+      });
+  }
+
+  private int deletedCount(List<Map<String, Object>> steps, String resource) {
+    return steps.stream()
+      .filter(step -> resource.equals(step.get("resource")))
+      .mapToInt(step -> intValue(step.get("deleted")) == null ? 0 : intValue(step.get("deleted")))
+      .sum();
   }
 
   private Mono<Integer> deleteOwnedLogMaps(String owner, boolean deleteAuditLogs) {

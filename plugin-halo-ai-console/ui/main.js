@@ -2077,6 +2077,7 @@
       const logScope = ref("own");
       const canViewAllLogs = ref(false);
       const logError = ref("");
+      const dataMessage = ref("");
       const Button = components.VButton || "button";
       const refreshLogs = async () => {
         try {
@@ -2122,18 +2123,27 @@
         saveCallLogs([]);
       };
       const exportOwnData = async () => {
+        dataMessage.value = "正在准备导出。日志和后台 Job 各最多导出 10,000 条，附件仅导出引用信息。";
         try {
           const { data } = await axios.get(`${CHAT_API}/me/export`);
           downloadText(`halo-ai-console-data-${Date.now()}.json`, JSON.stringify(data, null, 2));
+          dataMessage.value = "导出完成。日志和后台 Job 各最多包含 10,000 条，附件文件本身不会包含在导出 JSON 中。";
         } catch (cause) {
-          logError.value = `个人数据导出失败：${cause?.response?.data?.detail || cause?.message || "请求失败"}`;
+          dataMessage.value = `个人数据导出失败：${cause?.response?.data?.detail || cause?.message || "请求失败"}`;
         }
       };
       const deleteOwnData = async () => {
-        if (!window.confirm("这会删除你的会话、Job、图片缓存、用量记录和个人设置；是否继续？审计日志和 Halo 附件是否删除由管理员策略决定。")) return;
+        if (!window.confirm("这会删除你的会话、Job、图片缓存、用量记录和个人设置；是否继续？审计日志是否删除由管理员策略决定。该操作不会删除 Halo 附件库中的上传文件，请前往附件管理单独删除。")) return;
         try {
-          await axios.delete(`${CHAT_API}/me/data`);
+          const { data } = await axios.delete(`${CHAT_API}/me/data`);
           [STORE_KEY, SELECTED_KEY, SETTINGS_KEY, LOG_KEY].forEach((key) => localStorage.removeItem(key));
+          const failures = Array.isArray(data?.failures) ? data.failures : [];
+          if (failures.length) {
+            const details = failures.map((item) => `${item.resource || "unknown"}: ${item.error || "删除失败"}`).join("；");
+            dataMessage.value = `个人数据已部分删除，仍有 ${failures.length} 项失败：${details}。请修复后重试。Halo 附件库中的上传文件不会由此操作删除，请前往附件管理单独删除。`;
+            return;
+          }
+          window.alert("个人数据删除完成。该操作不会删除 Halo 附件库中的上传文件，请前往附件管理单独删除。");
           window.location.reload();
         } catch (cause) {
           logError.value = `个人数据删除失败：${cause?.response?.data?.detail || cause?.message || "请求失败"}`;
@@ -2160,6 +2170,14 @@
           })]),
           h("p", "聊天历史、消息编辑和调用记录会同步到 Halo 数据库；浏览器本地缓存只作为离线兜底。"),
           h("p", { class: "readonly-note" }, `图片大小上限由管理员在插件详情的“基本设置”中统一配置。当前前端提示值约 ${settings.value.imageMaxSizeMb || 8} MB，此处不可修改。`),
+          h("p", { class: "readonly-note" }, [
+            "消息和附件可能会发送给管理员配置的第三方 AI 服务。当前版本的隐私与数据处理说明：",
+            h("a", {
+              href: "https://github.com/joshuaJJM/halo-ai-console/blob/main/PRIVACY.md",
+              target: "_blank",
+              rel: "noreferrer",
+            }, "查看隐私与数据处理说明"),
+          ]),
           h("label", [h("span", "自动压缩阈值（%）"), h("input", {
             type: "number",
             min: 50,
@@ -2172,6 +2190,7 @@
             onInput: (event) => { settings.value.memoryText = event.target.value; },
           })]),
           h(Button, { type: "primary", onClick: save }, () => "保存设置"),
+          dataMessage.value ? h("p", { class: "readonly-note" }, dataMessage.value) : null,
           h("div", { class: "settings-data-actions" }, [
             h(Button, { size: "sm", onClick: exportOwnData }, () => "导出我的数据"),
             h(Button, { size: "sm", type: "danger", onClick: deleteOwnData }, () => "删除我的数据"),

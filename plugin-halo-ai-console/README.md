@@ -31,7 +31,7 @@ The plugin installs these role templates:
 - `View own AI audit logs`: can view the audit-log view for the current user.
 - `Manage Halo AI Console`: can read all users' logs, run legacy migration, and access admin-only console endpoints. All-log and migration endpoints also perform backend permission checks in addition to Halo RBAC.
 - Global plugin settings are exposed through Halo's plugin settings page via `settingName` / `configMapName` and should be managed by users who already have Halo plugin management permission.
-- `GET /me/export` exports the current user's sessions, personal settings, logs, jobs, and attachment references as JSON. `DELETE /me/data` deletes the current user's sessions, jobs, image caches, usage records, and personal settings; audit-log deletion follows the administrator policy `allowUserAuditLogDeletion`, and Halo attachments are not deleted by the plugin.
+- `GET /me/export` exports the current user's sessions, personal settings, logs, jobs, and attachment references as JSON. The UI states that logs and jobs are each capped at 10,000 records. `DELETE /me/data` returns per-resource `steps`, `failures`, `success`, and `partialFailure` fields so callers can distinguish a complete deletion from a partial deletion; audit-log deletion follows the administrator policy `allowUserAuditLogDeletion`, and Halo attachments are not deleted by the plugin.
 
 ## Privacy and Data Processing
 
@@ -69,9 +69,9 @@ The plugin installs these role templates:
 
 ## Build Artifact
 
-Current plugin version: `0.2.7`.
+Current plugin version: `0.2.8`.
 
-Local packaged jar: `dist/halo-ai-console-0.2.7.jar`.
+Local packaged jar: `dist/halo-ai-console-0.2.8.jar`.
 
 Historical packaged jars are committed under the repository `dist/` directory for quick download and regression comparison.
 
