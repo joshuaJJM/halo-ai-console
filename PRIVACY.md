@@ -2,7 +2,7 @@
 
 最后更新：2026-07-28
 
-Halo AI Console 是社区维护的 Halo Console 插件，不是 Halo 官方产品。本说明描述插件 `0.2.8` 的实际数据处理方式。Halo 站点管理员负责决定是否启用插件、配置哪些 AI Foundation 模型、授予哪些权限以及设置保存期限。
+Halo AI Console 是社区维护的 Halo Console 插件，不是 Halo 官方产品。本说明描述插件 `0.3.0` 的实际数据处理方式。Halo 站点管理员负责决定是否启用插件、配置哪些 AI Foundation 模型、授予哪些权限以及设置保存期限。
 
 ## 处理哪些数据
 
@@ -81,9 +81,9 @@ Halo AI Console 是社区维护的 Halo Console 插件，不是 Halo 官方产�
 
 拥有聊天权限的用户可以查看自己的调用记录；拥有单独的审计权限的用户可以打开自己的审计视图；拥有管理员/全部日志权限的用户可以查看全部用户的审计日志。普通用户不能直接删除审计日志。管理员可以打开 `allowUserAuditLogDeletion`，允许用户在执行 `DELETE /me/data` 时删除自己的日志；该策略不会赋予用户删除其他人的日志权限。日志会在默认 90 天或管理员配置的期限后由清理任务删除，但清理任务不保证已经导出的副本或第三方模型服务商处的日志同步删除。
 
-## AI Foundation 接口与测试接口回退
+## AI Foundation 模型调用
 
-聊天先调用 AI Foundation 的 `/chat/ui-message/stream`，不存在或不支持时才回退到 `/test-chat/ui-message/stream`。当前图像 Job 的实际顺序是先调用非流式 `/test-image-generation`，再在接口不存在或不支持时尝试 `/image-generation`；这是因为本地验证的 AI Foundation `1.0.0-beta.4` 暴露的是前者。`/test-image-generation` 当前不是 Image Streaming 接口。测试路径是 AI Foundation 暴露的 Console API，不是插件自建的 API；它们可能随 AI Foundation 版本变化，生产环境应优先使用提供稳定接口且支持图像流式能力的 AI Foundation 版本。
+插件 `0.3.0` 起通过 AI Foundation Java SDK 的 `AiModelService` 调用语言、多模态和图像生成模型，不再调用 AI Foundation Console 的 `test-*` 接口，也不再把用户 Cookie 交给后台任务。模型内容仍会由 AI Foundation 转发给管理员配置的第三方服务商。
 
 ## 第三方资源和许可证
 

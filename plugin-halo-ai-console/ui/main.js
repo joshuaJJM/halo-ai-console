@@ -648,146 +648,12 @@
     window.setTimeout(() => URL.revokeObjectURL(url), 1000);
   }
 
-  function chunkPayload(chunk) {
-    return chunk?.delta || chunk?.text || chunk?.content || chunk?.data || "";
-  }
-
-  function chunkKind(chunk) {
-    const type = String(chunk?.type || chunk?.chunkType || "");
-    if (type.includes("reasoning")) return "reasoning";
-    if (type.includes("text")) return "text";
-    if (typeof chunk?.delta === "string") return "text";
-    return "";
-  }
-
-  function collectGeneratedImages(payload) {
-    const items = [
-      ...(Array.isArray(payload?.images) ? payload.images : []),
-      ...(Array.isArray(payload?.files) ? payload.files : []),
-      ...(payload?.image ? [payload.image] : []),
-      ...(payload?.file ? [payload.file] : []),
-    ];
-    return items.map((item) => {
-      if (typeof item === "string") return item;
-      return item?.url || item?.data || item?.base64 || item?.b64Json || item?.b64_json || "";
-    }).filter(Boolean);
-  }
-
-  async function readUiMessageStream(response, onChunk) {
-    const reader = response.body.getReader();
-    const decoder = new TextDecoder();
-    let buffer = "";
-    const dispatchEvent = (event) => {
-      const data = event.data.join("\n");
-      const marker = data.trim();
-      if (!marker || marker === "[DONE]" || marker === "DONE") return;
-      try {
-        const parsed = JSON.parse(data);
-        const kind = chunkKind(parsed);
-        const text = chunkPayload(parsed);
-        if (kind && text) onChunk(kind, text, parsed);
-        if (String(parsed?.type || event.event || "").includes("error") && (parsed.errorText || parsed.message)) {
-          onChunk("text", parsed.errorText || parsed.message, parsed);
-        }
-      } catch (_) {
-        onChunk("text", data, { event: event.event || "message" });
-      }
-    };
-    const processFrame = (frame) => {
-      const event = { event: "message", data: [], id: undefined, retry: undefined };
-      for (const rawLine of frame.replace(/\r\n/g, "\n").split("\n")) {
-        if (!rawLine || rawLine.startsWith(":")) continue;
-        const separator = rawLine.indexOf(":");
-        const field = separator >= 0 ? rawLine.slice(0, separator) : rawLine;
-        const value = separator >= 0 ? rawLine.slice(separator + 1).replace(/^ /, "") : "";
-        if (field === "event") event.event = value || "message";
-        if (field === "data") event.data.push(value);
-        if (field === "id") event.id = value;
-        if (field === "retry") event.retry = Number(value);
-      }
-      dispatchEvent(event);
-    };
-    for (;;) {
-      const { value, done } = await reader.read();
-      if (done) {
-        if (buffer.trim()) processFrame(buffer);
-        break;
-      }
-      buffer += decoder.decode(value, { stream: true });
-      buffer = buffer.replace(/\r\n/g, "\n");
-      const frames = buffer.split("\n\n");
-      buffer = frames.pop() || "";
-      for (const frame of frames) {
-        processFrame(frame);
-      }
-    }
-  }
-
-  async function readGenericSseStream(response, onEvent) {
-    const reader = response.body.getReader();
-    const decoder = new TextDecoder();
-    let buffer = "";
-    const processFrame = (frame) => {
-      const event = { event: "message", data: [], id: undefined, retry: undefined };
-      for (const rawLine of frame.replace(/\r\n/g, "\n").split("\n")) {
-        if (!rawLine || rawLine.startsWith(":")) continue;
-        const separator = rawLine.indexOf(":");
-        const field = separator >= 0 ? rawLine.slice(0, separator) : rawLine;
-        const value = separator >= 0 ? rawLine.slice(separator + 1).replace(/^ /, "") : "";
-        if (field === "event") event.event = value || "message";
-        if (field === "data") event.data.push(value);
-        if (field === "id") event.id = value;
-        if (field === "retry") event.retry = Number(value);
-      }
-      onEvent(event);
-    };
-    for (;;) {
-      const { value, done } = await reader.read();
-      if (done) {
-        if (buffer.trim()) processFrame(buffer);
-        break;
-      }
-      buffer += decoder.decode(value, { stream: true }).replace(/\r\n/g, "\n");
-      const frames = buffer.split("\n\n");
-      buffer = frames.pop() || "";
-      for (const frame of frames) processFrame(frame);
-    }
-  }
-
-  async function postModelStream(model, pathCandidates, body, options = {}) {
-    let lastResponse;
-    for (const path of pathCandidates) {
-      const response = await fetch(`${API}/models/${encodeURIComponent(model)}/${path}`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        credentials: "same-origin",
-        body: JSON.stringify(body),
-        signal: options.signal,
-      });
-      if (response.status === 404 || response.status === 405) {
-        lastResponse = response;
-        continue;
-      }
-      return response;
-    }
-    return lastResponse;
-  }
-
-  async function postModelJson(model, pathCandidates, body, options = {}) {
-    let lastError;
-    for (const path of pathCandidates) {
-      try {
-        return await axios.post(`${API}/models/${encodeURIComponent(model)}/${path}`, body, { signal: options.signal });
-      } catch (err) {
-        const status = err?.response?.status;
-        if (status === 404 || status === 405) {
-          lastError = err;
-          continue;
-        }
-        throw err;
-      }
-    }
-    throw lastError || new Error("No compatible AI Foundation endpoint is available.");
+  async function generateText(model, messages, maxOutputTokens) {
+    const { data } = await axios.post(
+      `${CHAT_API}/models/${encodeURIComponent(model)}/generate-text`,
+      { messages, maxOutputTokens }
+    );
+    return data || {};
   }
 
   const MarkdownContent = {
@@ -958,10 +824,7 @@
         error.value = "";
         try {
           const source = older.map((message) => `${message.role === "user" ? "用户" : "AI"}：${message.content || ""}${message.reasoning ? `\n思考：${message.reasoning}` : ""}`).join("\n\n");
-          const response = await postModelStream(model, ["chat/ui-message/stream", "test-chat/ui-message/stream"], {
-              id: uid("compress"),
-              trigger: "submit-message",
-              messages: [{
+          const result = await generateText(model, [{
                 id: uid("compress-user"),
                 role: "user",
                 parts: [{
@@ -969,15 +832,8 @@
                   id: uid("compress-text"),
                   text: `请把以下对话压缩成一段给后续 AI 继续理解的上下文摘要。保留用户目标、关键事实、重要结论、未解决事项，删除寒暄和重复内容。\n\n${source}`,
                 }],
-              }],
-              maxOutputTokens: 1200,
-            });
-          if (!response.ok) throw new Error(await response.text());
-          let summary = "";
-          await readUiMessageStream(response, (kind, text) => {
-            if (kind === "text") summary += text;
-          });
-          summary = summary.trim();
+              }], 1200);
+          const summary = String(result.text || "").trim();
           if (!summary) throw new Error("压缩模型没有返回摘要。");
           const now = Date.now();
           current.value.memory = [current.value.memory, summary].filter(Boolean).join("\n\n").slice(-12000);
@@ -1006,10 +862,7 @@
         contextCompressing.value = true;
         try {
           const source = older.map((message) => `${message.role === "user" ? "User" : "AI"}: ${message.content || ""}${message.reasoning ? `\nReasoning: ${message.reasoning}` : ""}`).join("\n\n");
-          const response = await postModelStream(model, ["chat/ui-message/stream", "test-chat/ui-message/stream"], {
-              id: uid("auto-compress"),
-              trigger: "submit-message",
-              messages: [{
+          const result = await generateText(model, [{
                 id: uid("auto-compress-user"),
                 role: "user",
                 parts: [{
@@ -1017,15 +870,8 @@
                   id: uid("auto-compress-text"),
                   text: `Summarize these old messages for future context. Preserve key facts, user preferences, constraints, decisions, unresolved tasks, names, URLs, filenames, and exact errors. Keep it concise.\n\n${source}`,
                 }],
-              }],
-              maxOutputTokens: 1200,
-            });
-          if (!response.ok) return;
-          let summary = "";
-          await readUiMessageStream(response, (kind, text) => {
-            if (kind === "text") summary += text;
-          });
-          summary = summary.trim();
+              }], 1200);
+          const summary = String(result.text || "").trim();
           if (!summary) return;
           const now = Date.now();
           current.value.memory = [current.value.memory, summary].filter(Boolean).join("\n\n").slice(-12000);
@@ -1279,22 +1125,12 @@
         error.value = "";
         try {
           const source = messages.slice(-40).map((message) => `${message.role === "user" ? "用户" : "AI"}：${message.content || ""}${message.reasoning ? `\n思考：${message.reasoning}` : ""}`).join("\n\n");
-          const response = await postModelStream(model, ["chat/ui-message/stream", "test-chat/ui-message/stream"], {
-            id: uid("conversation-summary"),
-            trigger: "submit-message",
-            messages: [{
+          const result = await generateText(model, [{
               id: uid("conversation-summary-user"),
               role: "user",
               parts: [{ type: "text", id: uid("conversation-summary-text"), text: `请给下面这段对话生成结构化摘要，包含：目标、已确认事实、关键结论、待办/未解决问题。不要编造。\n\n${source}` }],
-            }],
-            maxOutputTokens: 1000,
-          });
-          if (!response.ok) throw new Error(await response.text());
-          let summary = "";
-          await readUiMessageStream(response, (kind, text) => {
-            if (kind === "text") summary += text;
-          });
-          summary = summary.trim();
+            }], 1000);
+          const summary = String(result.text || "").trim();
           if (!summary) throw new Error("摘要模型没有返回内容。");
           const message = { id: uid("summary"), role: "assistant", content: `## 对话摘要\n\n${summary}`, createdAt: Date.now(), tags: ["summary"] };
           current.value.messages.push(message);
@@ -1434,22 +1270,12 @@
         const model = defaultLanguageModel.value?.name || languageModels.value[0]?.name;
         if (!model) return;
         try {
-          const response = await postModelStream(model, ["chat/ui-message/stream", "test-chat/ui-message/stream"], {
-              id: uid("title"),
-              trigger: "submit-message",
-              messages: [{
+          const result = await generateText(model, [{
                 id: uid("title-user"),
                 role: "user",
                 parts: [{ type: "text", id: uid("title-text"), text: `请为下面这段对话生成一个不超过 12 个汉字的标题，只输出标题：\n${prompt}` }],
-              }],
-              maxOutputTokens: 64,
-            });
-          if (!response.ok) return;
-          let title = "";
-          await readUiMessageStream(response, (kind, text) => {
-            if (kind === "text") title += text;
-          });
-          title = title.replace(/["“”'。.\n\r]/g, "").trim();
+              }], 64);
+          const title = String(result.text || "").replace(/["“”'。.\n\r]/g, "").trim();
           if (title) {
             current.value.title = title.slice(0, 24);
             current.value.updatedAt = Date.now();
@@ -1621,51 +1447,6 @@
         current.value.updatedAt = Date.now();
         persist();
         appendCallLog({ type: "image", model, status: assistant.images?.length ? "success" : "empty", durationMs: Date.now() - startedAt, promptTokens: assistant.promptTokens, completionTokens: 0, totalTokens: assistant.totalTokens });
-        return;
-        const streamed = await tryStreamImageGeneration(model, payload, assistant);
-        if (streamed) {
-          assistant.streaming = false;
-          assistant.content = assistant.images.length ? "已生成图像：" : "图像生成流结束，但没有返回图像。";
-          appendCallLog({ type: "image", model, status: assistant.images.length ? "success" : "empty", durationMs: Date.now() - startedAt, promptTokens: assistant.promptTokens, completionTokens: 0, totalTokens: assistant.totalTokens });
-          return;
-        }
-        const { data } = await postModelJson(model, ["test-image-generation", "image-generation"], payload, { signal: abortController.value?.signal });
-        const images = data.images || data.files || [];
-        assistant.streaming = false;
-        assistant.content = images.length ? "已生成图像：" : "图像模型完成了请求，但没有返回图像。";
-        assistant.images = images.map((item) => item.url || item.data || item.base64 || item.b64Json).filter(Boolean);
-        current.value.updatedAt = Date.now();
-        persist();
-        appendCallLog({ type: "image", model, status: images.length ? "success" : "empty", durationMs: Date.now() - startedAt, promptTokens: estimateTokens(prompt), completionTokens: 0, totalTokens: estimateTokens(prompt) });
-      }
-
-      async function tryStreamImageGeneration(model, payload, assistant) {
-        const response = await postModelStream(model, ["test-image-generation"], payload, {
-          signal: abortController.value?.signal,
-        });
-        if (response.status === 404 || response.status === 405) return false;
-        if (!response.ok) throw new Error(await response.text() || `AI Foundation 返回 ${response.status}`);
-        await readGenericSseStream(response, (event) => {
-          const text = event.data.join("\n");
-          const marker = text.trim();
-          if (!marker || marker === "[DONE]" || marker === "DONE") return;
-          try {
-            const parsed = JSON.parse(text);
-            const nextImages = collectGeneratedImages(parsed);
-            if (nextImages.length) {
-              assistant.images = Array.from(new Set([...(assistant.images || []), ...nextImages]));
-              assistant.content = "正在接收图像...";
-            } else if (parsed.progress || parsed.status || parsed.message) {
-              assistant.content = parsed.message || parsed.status || `正在生成图像... ${parsed.progress}%`;
-            }
-          } catch (_) {
-            assistant.content = marker;
-          }
-          current.value.updatedAt = Date.now();
-          persist();
-          scheduleScrollBottom();
-        });
-        return true;
       }
 
       async function send() {

@@ -9,7 +9,7 @@ This project is not an official Halo project and does not use the official Halo 
 ## Features
 
 - Adds a `Halo AI` console route and a settings / call-log route.
-- Uses AI Foundation console APIs for model options, chat streaming, image generation, and image streaming when the installed AI Foundation version exposes it.
+- Uses the AI Foundation Java SDK for chat, multimodal input, summaries, and image generation. The Console API is used only to discover enabled model options.
 - `Default` model selection means the default model of the requested capability: language / multimodal for chat, image generation for `/image` or image mode.
 - Administrators can configure global model policy in the Halo plugin settings: keep capability defaults, specify model names, and restrict the list of models users may select. The backend also rejects chat/image jobs that use a model outside the allow-list.
 - Chat and image jobs are now pushed back to the browser through the plugin job SSE endpoint, with throttled running-state persistence to avoid excessive Kubernetes API writes during long streaming replies.
@@ -45,9 +45,9 @@ The plugin installs these role templates:
 
 ## APIs Used
 
-- AI Foundation models: `/apis/console.api.aifoundation.halo.run/v1alpha1/model-options?enabled=true`
-- AI Foundation chat stream: tries `/apis/console.api.aifoundation.halo.run/v1alpha1/models/{model}/chat/ui-message/stream`, then falls back to `/test-chat/ui-message/stream` when the installed AI Foundation only exposes console test routes.
-- AI Foundation image generation is consumed by a backend job. For the locally verified AI Foundation `1.0.0-beta.4`, the available console endpoint is non-streaming `/test-image-generation`; the plugin uses that first and can fall back to non-streaming `/image-generation` if a later AI Foundation exposes it.
+- AI Foundation model discovery: `/apis/console.api.aifoundation.halo.run/v1alpha1/model-options?enabled=true`
+- Model invocation: AI Foundation Java SDK through `ExtensionGetter`, `AiModelService`, `LanguageModel`, and `ImageGenerationModel`; no Console `test-*` endpoint is used.
+- Plugin text-generation bridge for titles and summaries: `/apis/console.api.halo-ai-console.halo.run/v1alpha1/models/{model}/generate-text`
 - Plugin attachment upload proxy: `/apis/console.api.halo-ai-console.halo.run/v1alpha1/attachments/upload`
 - Plugin global model/settings policy: `/apis/console.api.halo-ai-console.halo.run/v1alpha1/global-settings`
 - Bundled DOMPurify asset: `/apis/console.api.halo-ai-console.halo.run/v1alpha1/assets/dompurify.min.js`
@@ -65,13 +65,13 @@ The plugin installs these role templates:
 - Daily token usage is maintained in per-user/per-day usage records, so quota checks do not depend on the visible call-log page size.
 - Per-minute request windows, running-job reservations, and daily token usage are persisted in Halo ConfigMaps and updated with optimistic-lock retries, so limits also apply across multiple Halo instances.
 - Each plugin instance writes a heartbeat. On startup, jobs left in `running` or `pending` by an inactive instance are marked as `interrupted` with a retry hint and their persisted reservations are released. Completed, errored, cancelled, and interrupted jobs/logs are periodically cleaned according to the plugin global settings.
-- Background jobs still call AI Foundation through the current user's console credentials because AI Foundation exposes these console endpoints as user-scoped APIs. Long-running service-identity execution would require a supported internal/service API from AI Foundation.
+- Background jobs resolve AI Foundation's enabled `AiModelService` extension and continue independently of the browser session. User cookies are not retained or replayed for model calls.
 
 ## Build Artifact
 
-Current plugin version: `0.2.8`.
+Current plugin version: `0.3.0`.
 
-Local packaged jar: `dist/halo-ai-console-0.2.8.jar`.
+Local packaged jar: `dist/halo-ai-console-0.3.0.jar`.
 
 Historical packaged jars are committed under the repository `dist/` directory for quick download and regression comparison.
 
@@ -83,9 +83,9 @@ Halo AI Console 是社区维护的 Halo Console 插件，不是 Halo 官方插�
 
 聊天历史、Job、调用日志、图片缓存和个人设置使用 Halo ConfigMap 存储。设置页提供“导出我的数据”和“删除我的数据”：删除会话、Job、图片缓存、用量记录和个人设置；审计日志是否删除由管理员策略决定，Halo 附件仍需在附件管理中单独删除。完整说明见仓库根目录的 [`PRIVACY.md`](../PRIVACY.md)。
 
-### AI Foundation 测试接口回退
+### AI Foundation 模型调用
 
-聊天先调用 `/chat/ui-message/stream`，不存在或不支持时才回退到 `/test-chat/ui-message/stream`。当前图像 Job 的实际顺序是先调用非流式 `/test-image-generation`，再在接口不存在或不支持时尝试 `/image-generation`；这是因为本地验证的 AI Foundation `1.0.0-beta.4` 暴露的是前者。`/test-image-generation` 当前不是 Image Streaming 接口。测试路径来自 AI Foundation 的 Console API，不是插件自建的接口；升级 AI Foundation 后应重新验证接口顺序和是否提供稳定的图像流式接口。
+从 `0.3.0` 开始，聊天、多模态、摘要和图像生成均通过 AI Foundation Java SDK 的 `AiModelService` 调用，不再依赖 Console `test-*` 接口，也不再由后台 Job 保存或重放用户 Cookie。模型列表仍通过 AI Foundation 的只读 `model-options` Console API 获取。
 
 ### 本地打包资源和许可证
 

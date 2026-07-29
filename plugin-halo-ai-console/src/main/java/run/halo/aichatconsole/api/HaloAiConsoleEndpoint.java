@@ -47,6 +47,7 @@ import reactor.core.publisher.Sinks;
 import reactor.util.retry.Retry;
 import reactor.core.Disposable;
 import org.springframework.security.core.Authentication;
+import run.halo.aichatconsole.service.AiFoundationModelInvoker;
 import run.halo.aichatconsole.extension.AiChatCallLog;
 import run.halo.aichatconsole.extension.AiChatImageCache;
 import run.halo.aichatconsole.extension.AiChatMessage;
@@ -97,6 +98,7 @@ public class HaloAiConsoleEndpoint implements CustomEndpoint {
   private static final String GLOBAL_CONFIG_GROUP = "basic";
 
   private final ReactiveExtensionClient client;
+  private final AiFoundationModelInvoker modelInvoker;
   private final ObjectMapper objectMapper = new ObjectMapper();
   private final String instanceId = safeName("instance", UUID.randomUUID().toString());
   private final Map<String, Disposable> runningJobs = new ConcurrentHashMap<>();
@@ -104,8 +106,10 @@ public class HaloAiConsoleEndpoint implements CustomEndpoint {
   private final Map<String, UserUsageState> usageStates = new ConcurrentHashMap<>();
   private final Map<String, Sinks.Many<Map<String, Object>>> jobEventSinks = new ConcurrentHashMap<>();
 
-  public HaloAiConsoleEndpoint(ReactiveExtensionClient client) {
+  public HaloAiConsoleEndpoint(ReactiveExtensionClient client,
+    AiFoundationModelInvoker modelInvoker) {
     this.client = client;
+    this.modelInvoker = modelInvoker;
     Flux.interval(Duration.ZERO, Duration.ofSeconds(10))
       .flatMap(tick -> heartbeatInstance().onErrorResume(error -> Mono.empty()))
       .subscribe();
@@ -174,6 +178,7 @@ public class HaloAiConsoleEndpoint implements CustomEndpoint {
       .POST("/attachments/upload", this::uploadAttachment)
       .POST("/jobs/chat", this::createChatJob)
       .POST("/jobs/image", this::createImageJob)
+      .POST("/models/{name}/generate-text", this::generateText)
       .GET("/jobs/{name}", this::getJob)
       .GET("/jobs/{name}/events", this::jobEvents)
       .POST("/jobs/{name}/cancel", this::cancelJob)
@@ -395,6 +400,35 @@ public class HaloAiConsoleEndpoint implements CustomEndpoint {
       });
   }
 
+  private Mono<ServerResponse> generateText(ServerRequest request) {
+    return Mono.zip(request.bodyToMono(Map.class).map(this::castMap), globalSettings())
+      .flatMap(tuple -> {
+        var body = tuple.getT1();
+        var globalSettings = tuple.getT2();
+        var model = limitString(request.pathVariable("name"), 253);
+        if (model.isBlank()) {
+          throw badRequest("Model is required.");
+        }
+        enforceAllowedModel(model, globalSettings);
+        var messages = listOfMaps(body.get("messages"));
+        if (messages.isEmpty()) {
+          throw badRequest("Messages are required.");
+        }
+        validateAiRequestMessages(messages, globalSettings);
+        var maxOutputTokens = clampInt(body.get("maxOutputTokens"), 1, 8192, 1200);
+        return modelInvoker.generateText(model, messages, maxOutputTokens, baseUrl(request))
+          .flatMap(result -> {
+            var response = new LinkedHashMap<String, Object>();
+            response.put("text", limitString(result.text(), MAX_STREAM_TEXT_LENGTH));
+            response.put("reasoning", limitString(result.reasoning(), MAX_STREAM_TEXT_LENGTH));
+            response.put("inputTokens", result.inputTokens());
+            response.put("outputTokens", result.outputTokens());
+            response.put("totalTokens", result.totalTokens());
+            return ServerResponse.ok().bodyValue(response);
+          });
+      });
+  }
+
   private Mono<ServerResponse> createChatJob(ServerRequest request) {
     return Mono.zip(owner(request), request.bodyToMono(Map.class).map(this::castMap), globalSettings())
       .flatMap(tuple -> {
@@ -445,12 +479,12 @@ public class HaloAiConsoleEndpoint implements CustomEndpoint {
           job.put("instanceId", instanceId);
           job.put("heartbeatAt", now);
           job.putAll(requestAuditMeta(request));
-          var headers = headersForBackground(request);
+          var requestBaseUrl = baseUrl(request);
           return reserveUsage(owner, globalSettings, promptTokens, jobId)
             .flatMap(reservation -> saveJob(owner, jobId, job)
             .then(updateSessionStore(owner, sessionId, data -> data.put("session", writeMapValue(normalizedSession))))
             .doOnSuccess(ignored -> runChatJob(owner, sessionId, assistantId, jobId, model,
-              requestMessages, promptTokens, headers, globalSettings, reservation))
+              requestMessages, promptTokens, requestBaseUrl, globalSettings, reservation))
             .then(ServerResponse.ok().bodyValue(job))
             .onErrorResume(error -> releaseUsageReservation(reservation).then(Mono.error(error))));
         });
@@ -497,13 +531,13 @@ public class HaloAiConsoleEndpoint implements CustomEndpoint {
         job.put("instanceId", instanceId);
         job.put("heartbeatAt", now);
         job.putAll(requestAuditMeta(request));
-        var headers = headersForBackground(request);
+        var requestBaseUrl = baseUrl(request);
         var aiPayload = toAiFoundationImagePayload(payload);
         return reserveUsage(owner, globalSettings, promptTokens, jobId)
           .flatMap(reservation -> saveJob(owner, jobId, job)
           .then(updateSessionStore(owner, sessionId, data -> data.put("session", writeMapValue(normalizedSession))))
           .doOnSuccess(ignored -> runImageJobV2(owner, sessionId, assistantId, jobId, model, aiPayload,
-            promptTokens, headers, globalSettings, reservation))
+            promptTokens, requestBaseUrl, globalSettings, reservation))
           .then(ServerResponse.ok().bodyValue(job))
           .onErrorResume(error -> releaseUsageReservation(reservation).then(Mono.error(error))));
       });
@@ -557,8 +591,11 @@ public class HaloAiConsoleEndpoint implements CustomEndpoint {
 
   private Map<String, Object> transientJobEvent(String jobId, Integer promptTokens, Map<String, Object> state,
     String status, String error) {
-    var completionTokens = estimateTokens(stringValue(state.get("reasoning")) + "\n" + stringValue(state.get("content")));
-    var totalTokens = (promptTokens == null ? 0 : promptTokens) + completionTokens;
+    var effectivePromptTokens = tokenValue(state.get("_actualInputTokens"), promptTokens);
+    var completionTokens = tokenValue(state.get("_actualOutputTokens"),
+      estimateTokens(stringValue(state.get("reasoning")) + "\n" + stringValue(state.get("content"))));
+    var totalTokens = tokenValue(state.get("_actualTotalTokens"),
+      effectivePromptTokens + completionTokens);
     var job = new LinkedHashMap<String, Object>();
     job.put("id", jobId);
     job.put("status", status);
@@ -568,7 +605,7 @@ public class HaloAiConsoleEndpoint implements CustomEndpoint {
     job.put("reasoning", state.get("reasoning"));
     job.put("reasoningOpen", state.get("reasoningOpen"));
     job.put("images", listOfStrings(state.get("images")));
-    job.put("promptTokens", promptTokens);
+    job.put("promptTokens", effectivePromptTokens);
     job.put("completionTokens", completionTokens);
     job.put("totalTokens", totalTokens);
     return job;
@@ -1067,13 +1104,8 @@ public class HaloAiConsoleEndpoint implements CustomEndpoint {
   }
 
   private void runChatJob(String owner, String sessionId, String assistantId, String jobId, String model,
-    List<Map<String, Object>> requestMessages, Integer promptTokens, Map<String, String> headers,
+    List<Map<String, Object>> requestMessages, Integer promptTokens, String requestBaseUrl,
     Map<String, Object> globalSettings, UsageReservation reservation) {
-    var payload = new LinkedHashMap<String, Object>();
-    payload.put("id", "server-" + jobId);
-    payload.put("trigger", "submit-message");
-    payload.put("messages", requestMessages);
-    payload.put("maxOutputTokens", 4096);
     var state = new LinkedHashMap<String, Object>();
     state.put("content", "");
     state.put("reasoning", "");
@@ -1086,11 +1118,13 @@ public class HaloAiConsoleEndpoint implements CustomEndpoint {
     state.put("_promptTokens", promptTokens);
     var key = runningJobKey(owner, jobId);
     runningJobStates.put(key, state);
-    var disposable = postAiStream(model, List.of("chat/ui-message/stream", "test-chat/ui-message/stream"), payload, headers, 0)
-      .concatMap(chunk -> applyChatChunk(owner, sessionId, assistantId, jobId, promptTokens, state, chunk))
+    var disposable = modelInvoker.streamText(model, requestMessages, 4096, requestBaseUrl)
+      .flatMap(stream -> stream.deltas()
+        .concatMap(delta -> applyChatDelta(owner, sessionId, assistantId, jobId, promptTokens, state, delta))
+        .then(stream.result().doOnNext(result -> applyChatResult(state, result)).then()))
       .then(Mono.defer(() -> markChatJobFinished(owner, sessionId, assistantId, jobId, promptTokens, state, "success", "")))
       .onErrorResume(error -> markChatJobFinished(owner, sessionId, assistantId, jobId, promptTokens, state,
-        "error", limitString(error.getMessage(), 4000)))
+        "error", limitString(cleanAiFoundationError(error), 4000)))
       .doFinally(signal -> {
         runningJobs.remove(key);
         runningJobStates.remove(key);
@@ -1102,60 +1136,10 @@ public class HaloAiConsoleEndpoint implements CustomEndpoint {
       runningJobs.remove(key, disposable);
       runningJobStates.remove(key);
     }
-  }
-
-  private void runImageJob(String owner, String sessionId, String assistantId, String jobId, String model,
-    Map<String, Object> payload, Integer promptTokens, Map<String, String> headers,
-    Map<String, Object> globalSettings, UsageReservation reservation) {
-    runImageJobV2(owner, sessionId, assistantId, jobId, model, payload, promptTokens, headers, globalSettings, reservation);
-    /*
-    var state = new LinkedHashMap<String, Object>();
-    state.put("content", "正在生成图像...");
-    state.put("images", new ArrayList<String>());
-    state.put("_type", "image");
-    state.put("_sessionId", sessionId);
-    state.put("_assistantId", assistantId);
-    state.put("_jobId", jobId);
-    state.put("_promptTokens", promptTokens);
-    var key = runningJobKey(owner, jobId);
-    runningJobStates.put(key, state);
-    var stream = postAiStream(model, List.of("test-image-generation"), payload, headers, 0)
-      .concatMap(chunk -> applyImageChunk(owner, sessionId, assistantId, jobId, promptTokens, state, chunk))
-      .then(Mono.defer(() -> {
-        if (listOfStrings(state.get("images")).isEmpty()) {
-          return postAiJson(model, List.of("test-image-generation"), payload, headers, 0)
-            .flatMap(parsed -> {
-              mergeImages(state, collectGeneratedImages(parsed));
-              if (listOfStrings(state.get("images")).isEmpty()) {
-                state.put("content", "图像模型完成了请求，但没有返回图像。");
-              } else {
-                state.put("content", "已生成图像：");
-              }
-              return updateImageJobAndSession(owner, sessionId, assistantId, jobId, promptTokens, state, "success", "");
-            });
-        }
-        state.put("content", "已生成图像：");
-        return updateImageJobAndSession(owner, sessionId, assistantId, jobId, promptTokens, state, "success", "");
-      }));
-    var disposable = stream
-      .onErrorResume(error -> updateImageJobAndSession(owner, sessionId, assistantId, jobId, promptTokens, state,
-        "error", limitString(error.getMessage(), 4000)))
-      .doFinally(signal -> {
-        runningJobs.remove(key);
-        runningJobStates.remove(key);
-        releaseUsageReservation(reservation).subscribe();
-      })
-      .subscribe();
-    runningJobs.put(key, disposable);
-    if (disposable.isDisposed()) {
-      runningJobs.remove(key, disposable);
-      runningJobStates.remove(key);
-    }
-    */
   }
 
   private void runImageJobV2(String owner, String sessionId, String assistantId, String jobId, String model,
-    Map<String, Object> payload, Integer promptTokens, Map<String, String> headers,
+    Map<String, Object> payload, Integer promptTokens, String requestBaseUrl,
     Map<String, Object> globalSettings, UsageReservation reservation) {
     var state = new LinkedHashMap<String, Object>();
     state.put("content", "正在生成图像...");
@@ -1169,9 +1153,16 @@ public class HaloAiConsoleEndpoint implements CustomEndpoint {
     runningJobStates.put(key, state);
     var maxImageBytes = maxImageBytes(globalSettings);
     var stream = updateImageJobAndSession(owner, sessionId, assistantId, jobId, promptTokens, state, "running", "")
-      .then(postAiJson(model, List.of("test-image-generation", "image-generation"), payload, headers, 0))
-      .flatMap(parsed -> {
-        mergeImages(state, collectGeneratedImages(parsed, maxImageBytes), maxImageBytes);
+      .then(modelInvoker.generateImage(model, payload, requestBaseUrl))
+      .flatMap(result -> {
+        var images = result.images().stream()
+          .map(this::generatedImageReference)
+          .filter(reference -> !reference.isBlank())
+          .toList();
+        mergeImages(state, images, maxImageBytes);
+        state.put("_actualInputTokens", result.inputTokens());
+        state.put("_actualOutputTokens", result.outputTokens());
+        state.put("_actualTotalTokens", result.totalTokens());
         if (listOfStrings(state.get("images")).isEmpty()) {
           state.put("content", "图像模型完成了请求，但没有返回图像。");
         } else {
@@ -1195,94 +1186,27 @@ public class HaloAiConsoleEndpoint implements CustomEndpoint {
     }
   }
 
-  private Flux<String> postAiStream(String model,
-    List<String> paths, Map<String, Object> payload, Map<String, String> headers, int index) {
-    if (index >= paths.size()) {
-      return Flux.error(new IllegalStateException("No compatible AI Foundation chat endpoint is available."));
+  private Mono<Void> applyChatDelta(String owner, String sessionId, String assistantId, String jobId,
+    Integer promptTokens, Map<String, Object> state,
+    AiFoundationModelInvoker.TextDelta delta) {
+    if ("error".equals(delta.type())) {
+      return Mono.error(new IllegalStateException(delta.error().isBlank()
+        ? "AI Foundation stream failed."
+        : delta.error()));
     }
-    var target = headers.getOrDefault("_baseUrl", "") + "/apis/console.api.aifoundation.halo.run/v1alpha1/models/"
-      + java.net.URLEncoder.encode(model, java.nio.charset.StandardCharsets.UTF_8) + "/" + paths.get(index);
-    return WebClient.create().post()
-      .uri(target)
-      .headers(httpHeaders -> {
-        putHeaderIfPresent(headers, httpHeaders, HttpHeaders.COOKIE);
-        putHeaderIfPresent(headers, httpHeaders, "X-XSRF-TOKEN");
-        putHeaderIfPresent(headers, httpHeaders, HttpHeaders.AUTHORIZATION);
-      })
-      .contentType(MediaType.APPLICATION_JSON)
-      .bodyValue(payload)
-      .exchangeToFlux(response -> {
-        var status = response.statusCode().value();
-        if ((status == 404 || status == 405) && index + 1 < paths.size()) {
-          return response.releaseBody().thenMany(postAiStream(model, paths, payload, headers, index + 1));
-        }
-        if (response.statusCode().isError()) {
-          return response.bodyToMono(String.class).defaultIfEmpty("")
-            .flatMapMany(text -> Flux.error(new IllegalStateException(text.isBlank()
-              ? "AI Foundation returned " + response.statusCode().value()
-              : text)));
-        }
-        return response.bodyToFlux(new ParameterizedTypeReference<ServerSentEvent<String>>() {})
-          .map(event -> {
-            var frame = new StringBuilder();
-            if (event.event() != null && !event.event().isBlank()) {
-              frame.append("event:").append(event.event()).append('\n');
-            }
-            if (event.data() != null) {
-              frame.append("data:").append(event.data()).append('\n');
-            }
-            frame.append('\n');
-            return frame.toString();
-          });
-      });
-  }
-
-  private Mono<Map<String, Object>> postAiJson(String model, List<String> paths, Map<String, Object> payload,
-    Map<String, String> headers, int index) {
-    if (index >= paths.size()) {
-      return Mono.error(new IllegalStateException("No compatible AI Foundation image endpoint is available."));
-    }
-    var target = headers.getOrDefault("_baseUrl", "") + "/apis/console.api.aifoundation.halo.run/v1alpha1/models/"
-      + java.net.URLEncoder.encode(model, java.nio.charset.StandardCharsets.UTF_8) + "/" + paths.get(index);
-    return WebClient.builder()
-      .codecs(configurer -> configurer.defaultCodecs().maxInMemorySize((int) HARD_MAX_IMAGE_BYTES))
-      .build()
-      .post()
-      .uri(target)
-      .headers(httpHeaders -> {
-        putHeaderIfPresent(headers, httpHeaders, HttpHeaders.COOKIE);
-        putHeaderIfPresent(headers, httpHeaders, "X-XSRF-TOKEN");
-        putHeaderIfPresent(headers, httpHeaders, HttpHeaders.AUTHORIZATION);
-      })
-      .contentType(MediaType.APPLICATION_JSON)
-      .bodyValue(payload)
-      .exchangeToMono(response -> {
-        var status = response.statusCode().value();
-        if ((status == 404 || status == 405) && index + 1 < paths.size()) {
-          return response.releaseBody().then(postAiJson(model, paths, payload, headers, index + 1));
-        }
-        if (response.statusCode().isError()) {
-          return response.bodyToMono(String.class).defaultIfEmpty("")
-            .flatMap(text -> Mono.error(new IllegalStateException(text.isBlank()
-              ? "AI Foundation returned " + response.statusCode().value()
-              : text)));
-        }
-        return response.bodyToMono(Map.class).map(this::castMap);
-      });
-  }
-
-  private Mono<Void> applyChatChunk(String owner, String sessionId, String assistantId, String jobId,
-    Integer promptTokens, Map<String, Object> state, String chunk) {
-    var combined = (stringValue(state.remove("_sseBuffer")) + String.valueOf(chunk)).replace("\r\n", "\n");
-    var frames = combined.split("\n\n", -1);
-    var completeFrames = frames.length;
-    if (!combined.endsWith("\n\n")) {
-      completeFrames = Math.max(0, frames.length - 1);
-      state.put("_sseBuffer", frames[frames.length - 1]);
-    }
-    for (var i = 0; i < completeFrames; i++) {
-      var frame = frames[i];
-      applySseFrameToState(state, frame);
+    var maxOutput = clampInt(state.get("maxOutputCharacters"), 4000,
+      MAX_STREAM_TEXT_LENGTH, MAX_STREAM_TEXT_LENGTH);
+    if ("reasoning".equals(delta.type())) {
+      appendOutputLimited(state, "reasoning", delta.text(), maxOutput,
+        "AI output exceeded the maximum length.");
+    } else if ("text".equals(delta.type())) {
+      if (!stringValue(state.get("reasoning")).isBlank()) {
+        state.put("reasoningOpen", false);
+      }
+      appendOutputLimited(state, "content", delta.text(), maxOutput,
+        "AI output exceeded the maximum length.");
+    } else {
+      return Mono.empty();
     }
     emitJobEvent(owner, jobId, transientJobEvent(jobId, promptTokens, state, "running", ""));
     if (!shouldPersistRunningState(state)) {
@@ -1291,37 +1215,43 @@ public class HaloAiConsoleEndpoint implements CustomEndpoint {
     return updateChatJobAndSession(owner, sessionId, assistantId, jobId, promptTokens, state, "running", "");
   }
 
-  private Mono<Void> applyImageChunk(String owner, String sessionId, String assistantId, String jobId,
-    Integer promptTokens, Map<String, Object> state, String chunk) {
-    for (var payload : ssePayloads(state, chunk)) {
-      if (payload.isBlank() || "[DONE]".equals(payload) || "DONE".equals(payload)) {
-        continue;
-      }
-      try {
-        var parsed = objectMapper.readValue(payload, new TypeReference<Map<String, Object>>() {});
-        mergeImages(state, collectGeneratedImages(parsed));
-        var message = firstNonBlank(parsed.get("message"), parsed.get("status"), parsed.get("progress"));
-        if (message != null && !String.valueOf(message).isBlank()) {
-          state.put("content", limitString(String.valueOf(message), 2000));
-        }
-        if (!listOfStrings(state.get("images")).isEmpty()) {
-          state.put("content", "正在接收图像...");
-        }
-      } catch (IllegalStateException | ResponseStatusException e) {
-        throw e;
-      } catch (Exception e) {
-        state.put("content", limitString(payload, 2000));
-      }
+  private void applyChatResult(Map<String, Object> state,
+    AiFoundationModelInvoker.TextResult result) {
+    var reasoning = stringValue(result.reasoning());
+    var content = stringValue(result.text());
+    var maxOutput = clampInt(state.get("maxOutputCharacters"), 4000,
+      MAX_STREAM_TEXT_LENGTH, MAX_STREAM_TEXT_LENGTH);
+    if (reasoning.length() + content.length() > maxOutput) {
+      throw new IllegalStateException("AI output exceeded the maximum length.");
     }
-    return updateImageJobAndSession(owner, sessionId, assistantId, jobId, promptTokens, state, "running", "");
+    if (!reasoning.isBlank()) {
+      state.put("reasoning", reasoning);
+    }
+    if (!content.isBlank()) {
+      state.put("content", content);
+    }
+    state.put("_actualInputTokens", result.inputTokens());
+    state.put("_actualOutputTokens", result.outputTokens());
+    state.put("_actualTotalTokens", result.totalTokens());
+  }
+
+  private String generatedImageReference(AiFoundationModelInvoker.GeneratedImage image) {
+    if (image == null) {
+      return "";
+    }
+    if (!stringValue(image.url()).isBlank()) {
+      return image.url();
+    }
+    var base64 = stringValue(image.base64());
+    if (base64.isBlank() || base64.startsWith("data:")) {
+      return base64;
+    }
+    var mediaType = stringValue(image.mediaType());
+    return "data:" + (mediaType.isBlank() ? "image/png" : mediaType) + ";base64," + base64;
   }
 
   private Mono<Void> markChatJobFinished(String owner, String sessionId, String assistantId, String jobId,
     Integer promptTokens, Map<String, Object> state, String status, String error) {
-    var pending = stringValue(state.remove("_sseBuffer"));
-    if ("success".equals(status) && !pending.isBlank()) {
-      applySseFrameToState(state, pending);
-    }
     if ("success".equals(status)
       && stringValue(state.get("content")).isBlank()
       && !stringValue(state.get("reasoning")).isBlank()) {
@@ -1350,8 +1280,11 @@ public class HaloAiConsoleEndpoint implements CustomEndpoint {
     Integer promptTokens, Map<String, Object> state, String status, String error) {
     return fetchSessionSnapshot(owner, sessionId).flatMap(session -> fetchJob(owner, jobId).flatMap(job -> {
       var now = System.currentTimeMillis();
-      var completionTokens = estimateTokens(stringValue(state.get("reasoning")) + "\n" + stringValue(state.get("content")));
-      var totalTokens = (promptTokens == null ? 0 : promptTokens) + completionTokens;
+      var effectivePromptTokens = tokenValue(state.get("_actualInputTokens"), promptTokens);
+      var completionTokens = tokenValue(state.get("_actualOutputTokens"),
+        estimateTokens(stringValue(state.get("reasoning")) + "\n" + stringValue(state.get("content"))));
+      var totalTokens = tokenValue(state.get("_actualTotalTokens"),
+        effectivePromptTokens + completionTokens);
       job.put("id", jobId);
       job.put("sessionId", sessionId);
       job.put("assistantId", assistantId);
@@ -1363,7 +1296,7 @@ public class HaloAiConsoleEndpoint implements CustomEndpoint {
       job.put("content", state.get("content"));
       job.put("reasoning", state.get("reasoning"));
       job.put("reasoningOpen", state.get("reasoningOpen"));
-      job.put("promptTokens", promptTokens);
+      job.put("promptTokens", effectivePromptTokens);
       job.put("completionTokens", completionTokens);
       job.put("totalTokens", totalTokens);
       Mono<Void> saveLog = Mono.empty();
@@ -1380,7 +1313,7 @@ public class HaloAiConsoleEndpoint implements CustomEndpoint {
         log.put("error", error);
         log.put("time", now);
         log.put("durationMs", Math.max(0L, now - nullToZero(longValue(job.get("createdAt")))));
-        log.put("promptTokens", promptTokens);
+        log.put("promptTokens", effectivePromptTokens);
         log.put("completionTokens", completionTokens);
         log.put("totalTokens", totalTokens);
         copyAuditFields(job, log);
@@ -1396,7 +1329,7 @@ public class HaloAiConsoleEndpoint implements CustomEndpoint {
           message.put("reasoning", state.get("reasoning"));
           message.put("reasoningOpen", state.get("reasoningOpen"));
           message.put("updatedAt", now);
-          message.put("promptTokens", promptTokens);
+          message.put("promptTokens", effectivePromptTokens);
           message.put("completionTokens", completionTokens);
           message.put("totalTokens", totalTokens);
           found = true;
@@ -1412,7 +1345,7 @@ public class HaloAiConsoleEndpoint implements CustomEndpoint {
         assistant.put("reasoningOpen", state.get("reasoningOpen"));
         assistant.put("createdAt", now);
         assistant.put("updatedAt", now);
-        assistant.put("promptTokens", promptTokens);
+        assistant.put("promptTokens", effectivePromptTokens);
         assistant.put("completionTokens", completionTokens);
         assistant.put("totalTokens", totalTokens);
         messages.add(assistant);
@@ -1430,6 +1363,10 @@ public class HaloAiConsoleEndpoint implements CustomEndpoint {
     return fetchSessionSnapshot(owner, sessionId).flatMap(session -> fetchJob(owner, jobId).flatMap(job -> {
       var now = System.currentTimeMillis();
       var images = listOfStrings(state.get("images")).stream().limit(MAX_IMAGES_PER_MESSAGE).collect(Collectors.toList());
+      var effectivePromptTokens = tokenValue(state.get("_actualInputTokens"), promptTokens);
+      var completionTokens = tokenValue(state.get("_actualOutputTokens"), 0);
+      var totalTokens = tokenValue(state.get("_actualTotalTokens"),
+        effectivePromptTokens + completionTokens);
       job.put("id", jobId);
       job.put("sessionId", sessionId);
       job.put("assistantId", assistantId);
@@ -1440,9 +1377,9 @@ public class HaloAiConsoleEndpoint implements CustomEndpoint {
       job.put("heartbeatAt", now);
       job.put("content", limitString(stringValue(state.get("content")), MAX_CONTENT_LENGTH));
       job.put("images", images);
-      job.put("promptTokens", promptTokens);
-      job.put("completionTokens", 0);
-      job.put("totalTokens", promptTokens == null ? 0 : promptTokens);
+      job.put("promptTokens", effectivePromptTokens);
+      job.put("completionTokens", completionTokens);
+      job.put("totalTokens", totalTokens);
       Mono<Void> saveLog = Mono.empty();
       if (!"running".equals(status) && !Boolean.TRUE.equals(job.get("logged"))) {
         job.put("logged", true);
@@ -1457,12 +1394,12 @@ public class HaloAiConsoleEndpoint implements CustomEndpoint {
         log.put("error", error);
         log.put("time", now);
         log.put("durationMs", Math.max(0L, now - nullToZero(longValue(job.get("createdAt")))));
-        log.put("promptTokens", promptTokens);
-        log.put("completionTokens", 0);
-        log.put("totalTokens", promptTokens == null ? 0 : promptTokens);
+        log.put("promptTokens", effectivePromptTokens);
+        log.put("completionTokens", completionTokens);
+        log.put("totalTokens", totalTokens);
         copyAuditFields(job, log);
         saveLog = saveLog(owner, log)
-          .then(incrementDailyUsage(owner, dayKey(now), promptTokens == null ? 0 : promptTokens));
+          .then(incrementDailyUsage(owner, dayKey(now), totalTokens));
       }
       var savedJob = new LinkedHashMap<String, Object>(job);
       return saveJob(owner, jobId, savedJob).then(saveLog).then(updateSessionStore(owner, sessionId, data -> {
@@ -1474,9 +1411,9 @@ public class HaloAiConsoleEndpoint implements CustomEndpoint {
           message.put("images", images);
           message.put("streaming", "running".equals(status));
           message.put("updatedAt", now);
-          message.put("promptTokens", promptTokens);
-          message.put("completionTokens", 0);
-          message.put("totalTokens", promptTokens == null ? 0 : promptTokens);
+          message.put("promptTokens", effectivePromptTokens);
+          message.put("completionTokens", completionTokens);
+          message.put("totalTokens", totalTokens);
           found = true;
           break;
         }
@@ -1489,9 +1426,9 @@ public class HaloAiConsoleEndpoint implements CustomEndpoint {
         assistant.put("images", images);
         assistant.put("createdAt", now);
         assistant.put("updatedAt", now);
-        assistant.put("promptTokens", promptTokens);
-        assistant.put("completionTokens", 0);
-        assistant.put("totalTokens", promptTokens == null ? 0 : promptTokens);
+        assistant.put("promptTokens", effectivePromptTokens);
+        assistant.put("completionTokens", completionTokens);
+        assistant.put("totalTokens", totalTokens);
         messages.add(assistant);
       }
       session.put("messages", messages);
@@ -2418,25 +2355,6 @@ public class HaloAiConsoleEndpoint implements CustomEndpoint {
     return snapshot;
   }
 
-  private Map<String, String> headersForBackground(ServerRequest request) {
-    var headers = new LinkedHashMap<String, String>();
-    headers.put("_baseUrl", baseUrl(request));
-    request.headers().firstHeader(HttpHeaders.COOKIE);
-    var cookie = request.headers().firstHeader(HttpHeaders.COOKIE);
-    if (cookie != null) {
-      headers.put(HttpHeaders.COOKIE, cookie);
-    }
-    var xsrf = request.headers().firstHeader("X-XSRF-TOKEN");
-    if (xsrf != null) {
-      headers.put("X-XSRF-TOKEN", xsrf);
-    }
-    var authorization = request.headers().firstHeader(HttpHeaders.AUTHORIZATION);
-    if (authorization != null) {
-      headers.put(HttpHeaders.AUTHORIZATION, authorization);
-    }
-    return headers;
-  }
-
   private Map<String, Object> requestAuditMeta(ServerRequest request) {
     var meta = new LinkedHashMap<String, Object>();
     var userAgent = stringValue(request.headers().firstHeader(HttpHeaders.USER_AGENT));
@@ -2485,13 +2403,6 @@ public class HaloAiConsoleEndpoint implements CustomEndpoint {
     return ua.isBlank() ? "" : "Other";
   }
 
-  private void putHeaderIfPresent(Map<String, String> source, HttpHeaders target, String name) {
-    var value = source.get(name);
-    if (value != null && !value.isBlank()) {
-      target.set(name, value);
-    }
-  }
-
   private String cleanAiFoundationError(Throwable error) {
     var message = error == null ? "" : stringValue(error.getMessage());
     if (message.isBlank()) {
@@ -2511,56 +2422,6 @@ public class HaloAiConsoleEndpoint implements CustomEndpoint {
     return message;
   }
 
-  private void applySseFrameToState(Map<String, Object> state, String frame) {
-    var maxOutput = clampInt(state.get("maxOutputCharacters"), 4000, MAX_STREAM_TEXT_LENGTH, MAX_STREAM_TEXT_LENGTH);
-    var data = new StringBuilder();
-    var event = "";
-    for (var rawLine : String.valueOf(frame).replace("\r\n", "\n").split("\n")) {
-      if (rawLine.isBlank() || rawLine.startsWith(":")) {
-        continue;
-      }
-      var separator = rawLine.indexOf(':');
-      var field = separator >= 0 ? rawLine.substring(0, separator) : rawLine;
-      var value = separator >= 0 ? rawLine.substring(separator + 1).replaceFirst("^ ", "") : "";
-      if ("event".equals(field)) {
-        event = value;
-      }
-      if ("data".equals(field)) {
-        if (!data.isEmpty()) {
-          data.append('\n');
-        }
-        data.append(value);
-      }
-    }
-    var payload = data.toString().trim();
-    if (payload.isBlank()) {
-      payload = String.valueOf(frame).trim();
-    }
-    if (payload.isBlank() || "[DONE]".equals(payload) || "DONE".equals(payload)) {
-      return;
-    }
-    try {
-      var parsed = objectMapper.readValue(payload, new TypeReference<Map<String, Object>>() {});
-      var type = stringValue(parsed.getOrDefault("type", event)).toLowerCase();
-      var text = stringValue(firstNonBlank(parsed.get("delta"), parsed.get("text"), parsed.get("content"), parsed.get("data")));
-      if (text.isBlank()) {
-        return;
-      }
-      if (type.contains("reasoning")) {
-        appendOutputLimited(state, "reasoning", text, maxOutput, "AI output exceeded the maximum length.");
-      } else {
-        if (!stringValue(state.get("reasoning")).isBlank()) {
-          state.put("reasoningOpen", false);
-        }
-        appendOutputLimited(state, "content", text, maxOutput, "AI output exceeded the maximum length.");
-      }
-    } catch (IllegalStateException e) {
-      throw e;
-    } catch (Exception e) {
-      appendOutputLimited(state, "content", payload, maxOutput, "AI output exceeded the maximum length.");
-    }
-  }
-
   private void appendOutputLimited(Map<String, Object> state, String field, String delta, int maxLength, String error) {
     var reasoning = stringValue(state.get("reasoning"));
     var content = stringValue(state.get("content"));
@@ -2573,84 +2434,6 @@ public class HaloAiConsoleEndpoint implements CustomEndpoint {
     } else {
       state.put("content", content + text);
     }
-  }
-
-  private String appendLimited(String current, String delta, int maxLength, String error) {
-    var next = stringValue(current) + stringValue(delta);
-    if (next.length() > maxLength) {
-      throw new IllegalStateException(error);
-    }
-    return next;
-  }
-
-  private List<String> ssePayloads(Map<String, Object> state, String chunk) {
-    var combined = (stringValue(state.remove("_sseBuffer")) + String.valueOf(chunk)).replace("\r\n", "\n");
-    var frames = combined.split("\n\n", -1);
-    var completeFrames = frames.length;
-    if (!combined.endsWith("\n\n")) {
-      completeFrames = Math.max(0, frames.length - 1);
-      state.put("_sseBuffer", frames[frames.length - 1]);
-    }
-    var payloads = new ArrayList<String>();
-    for (var i = 0; i < completeFrames; i++) {
-      var data = new StringBuilder();
-      for (var rawLine : frames[i].split("\n")) {
-        if (rawLine.startsWith("data:")) {
-          if (!data.isEmpty()) {
-            data.append('\n');
-          }
-          data.append(rawLine.substring(5).replaceFirst("^ ", ""));
-        }
-      }
-      var payload = data.toString().trim();
-      if (payload.isBlank()) {
-        payload = frames[i].trim();
-      }
-      payloads.add(payload);
-    }
-    return payloads;
-  }
-
-  private List<String> collectGeneratedImages(Object value) {
-    return collectGeneratedImages(value, HARD_MAX_IMAGE_BYTES);
-  }
-
-  private List<String> collectGeneratedImages(Object value, long maxImageBytes) {
-    var found = new ArrayList<String>();
-    collectGeneratedImages(value, found, maxImageBytes);
-    return found.stream().filter(item -> !item.isBlank()).distinct().limit(MAX_IMAGES_PER_MESSAGE).collect(Collectors.toList());
-  }
-
-  @SuppressWarnings("unchecked")
-  private void collectGeneratedImages(Object value, List<String> found) {
-    collectGeneratedImages(value, found, HARD_MAX_IMAGE_BYTES);
-  }
-
-  @SuppressWarnings("unchecked")
-  private void collectGeneratedImages(Object value, List<String> found, long maxImageBytes) {
-    if (value instanceof Map<?, ?> map) {
-      for (var key : List.of("url", "data", "base64", "b64Json", "b64_json")) {
-        var next = map.get(key);
-        if (next != null) {
-          var reference = normalizeGeneratedImageReference(String.valueOf(next), maxImageBytes);
-          if (!reference.isBlank()) {
-            found.add(reference);
-          }
-        }
-      }
-      map.values().forEach(next -> collectGeneratedImages(next, found, maxImageBytes));
-    } else if (value instanceof Iterable<?> iterable) {
-      iterable.forEach(next -> collectGeneratedImages(next, found, maxImageBytes));
-    } else if (value instanceof String text) {
-      var reference = normalizeGeneratedImageReference(text, maxImageBytes);
-      if (!reference.isBlank()) {
-        found.add(reference);
-      }
-    }
-  }
-
-  private String normalizeGeneratedImageReference(String value) {
-    return normalizeGeneratedImageReference(value, HARD_MAX_IMAGE_BYTES);
   }
 
   private String normalizeGeneratedImageReference(String value, long maxImageBytes) {
@@ -2723,6 +2506,13 @@ public class HaloAiConsoleEndpoint implements CustomEndpoint {
       words++;
     }
     return Math.max(0, (int) Math.ceil(cjk * 0.75 + words * 1.25 + text.length() / 12.0));
+  }
+
+  private int tokenValue(Object actual, Integer fallback) {
+    var value = intValue(actual);
+    return value == null
+      ? Math.max(0, fallback == null ? 0 : fallback)
+      : Math.max(0, value);
   }
 
   private int estimateRequestTokens(List<Map<String, Object>> messages) {

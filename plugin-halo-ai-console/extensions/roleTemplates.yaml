@@ -12,11 +12,12 @@ metadata:
 rules:
   - apiGroups: ["console.api.aifoundation.halo.run"]
     resources: ["model-options", "models", "models/*"]
-    verbs: ["get", "list", "create"]
+    verbs: ["get", "list"]
   - apiGroups: ["console.api.halo-ai-console.halo.run"]
     resources:
       ["sessions-with-messages", "sessions", "call-logs", "settings",
-       "assets/dompurify.min.js", "image-caches", "attachments/upload", "jobs", "jobs/*", "jobs/chat", "jobs/image", "jobs/cancel"]
+       "assets/dompurify.min.js", "image-caches", "attachments/upload", "jobs", "jobs/*", "jobs/chat", "jobs/image", "jobs/cancel",
+       "models", "models/*"]
     verbs: ["get", "list", "create", "update", "delete"]
   - apiGroups: ["console.api.halo-ai-console.halo.run"]
     resources: ["me/export"]
