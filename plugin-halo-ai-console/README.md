@@ -8,6 +8,7 @@ This project is not an official Halo project and does not use the official Halo 
 
 ## Features
 
+- Requires AI Foundation `>= 1.0.0-beta.5`.
 - Adds a `Halo AI` console route and a settings / call-log route.
 - Uses the AI Foundation Java SDK for chat, multimodal input, summaries, and image generation. The Console API is used only to discover enabled model options.
 - `Default` model selection means the default model of the requested capability: language / multimodal for chat, image generation for `/image` or image mode.
@@ -69,9 +70,9 @@ The plugin installs these role templates:
 
 ## Build Artifact
 
-Current plugin version: `0.3.0`.
+Current plugin version: `0.3.1`.
 
-Local packaged jar: `dist/halo-ai-console-0.3.0.jar`.
+Local packaged jar: `dist/halo-ai-console-0.3.1.jar`.
 
 Historical packaged jars are committed under the repository `dist/` directory for quick download and regression comparison.
 
@@ -97,7 +98,7 @@ Halo AI Console 是社区维护的 Halo Console 插件，不是 Halo 官方插�
 - LaTeX：没有打包 MathJax。当前仅使用本项目的有限格式处理逻辑，不能视为完整 TeX/LaTeX 引擎；不保证复杂宏包、环境或公式都能渲染。
 - 图标：使用 Halo Console 运行时提供的图标组件；没有额外打包图标库。
 - Java 依赖：使用 Halo 和 AI Foundation 运行时提供的 API/依赖，不在插件中重复打包；具体许可证由对应运行时项目负责。
-- 本插件自身许可证：MIT，见 [`LICENSE`](../LICENSE)。
+- 本插件自身许可证：GNU Affero General Public License v3.0（`AGPL-3.0-only`），见 [`LICENSE`](../LICENSE)。
 
 ## Support
 

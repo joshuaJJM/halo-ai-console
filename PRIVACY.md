@@ -1,8 +1,8 @@
 # Halo AI Console 隐私与数据处理说明
 
-最后更新：2026-07-28
+最后更新：2026-07-29
 
-Halo AI Console 是社区维护的 Halo Console 插件，不是 Halo 官方产品。本说明描述插件 `0.3.0` 的实际数据处理方式。Halo 站点管理员负责决定是否启用插件、配置哪些 AI Foundation 模型、授予哪些权限以及设置保存期限。
+Halo AI Console 是社区维护的 Halo Console 插件，不是 Halo 官方产品。本说明描述插件 `0.3.1` 的实际数据处理方式。Halo 站点管理员负责决定是否启用插件、配置哪些 AI Foundation 模型、授予哪些权限以及设置保存期限。
 
 ## 处理哪些数据
 
@@ -94,6 +94,6 @@ Halo AI Console 是社区维护的 Halo Console 插件，不是 Halo 官方产�
 - **MathJax**：没有打包 MathJax。`mathjax-local.js` 只是兼容占位脚本，当前公式处理是本项目的有限格式逻辑，不是完整 LaTeX 引擎。
 - **图标**：使用 Halo Console 运行时的图标组件，没有额外打包图标库。
 - **Java 依赖**：插件使用 Halo 和 AI Foundation 提供的运行时 API/依赖，不重复打包这些依赖；它们的许可证由对应项目声明。
-- **本插件**：MIT License，见仓库根目录 [`LICENSE`](LICENSE)。
+- **本插件**：GNU Affero General Public License v3.0（`AGPL-3.0-only`），见仓库根目录 [`LICENSE`](LICENSE)。
 
 如果发现依赖版本或许可证信息与打包文件不一致，请在 [GitHub Issues](https://github.com/joshuaJJM/halo-ai-console/issues) 提交问题，并附上插件版本和相关文件名。

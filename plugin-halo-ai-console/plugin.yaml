@@ -8,7 +8,7 @@ spec:
   enabled: true
   requires: ">=2.25.0"
   pluginDependencies:
-    ai-foundation: "*"
+    ai-foundation: ">=1.0.0-beta.5"
   author:
     name: "joshuaJJM"
     website: "https://github.com/joshuaJJM/halo-ai-console"
@@ -18,6 +18,6 @@ spec:
   displayName: "Halo AI Console"
   description: "AI-powered chat, image generation, audit, and model management for Halo Console."
   license:
-    - name: "MIT"
-      url: "https://opensource.org/license/mit"
-  version: "0.3.0"
+    - name: "GNU AGPL v3"
+      url: "https://www.gnu.org/licenses/agpl-3.0.html"
+  version: "0.3.1"

@@ -1724,7 +1724,7 @@
               h("button", { onClick: () => copyPlainText(message) }, "复制纯文本"),
               h("button", { onClick: () => exportMessage(message) }, "📄 Export"),
               h("button", { disabled: loading.value, onClick: () => retryMessage(message) }, "🔄 Retry"),
-              h("button", { onClick: () => toggleFavorite(message) }, (message._sourceMessage || message).favorite ? "Unfavorite" : "Favorite"),
+              h("button", { onClick: () => toggleFavorite(message) }, (message._sourceMessage || message).favorite ? "⭐ Unfavorite" : "⭐ Favorite"),
             ]) : null,
             message.role === "user" && editingMessageId.value !== message.id ? h("div", { class: "message-actions" }, [
               h("button", { onClick: () => startEditMessage(message) }, "编辑"),

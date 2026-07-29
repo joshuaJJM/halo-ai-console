@@ -14,4 +14,4 @@ The plugin uses APIs and runtime dependencies supplied by Halo and AI Foundation
 
 ## Project-authored compatibility code
 
-The lightweight Markdown fallback, Mermaid-compatible flowchart renderer, code highlighter, and LaTeX compatibility formatter are authored by this project and are covered by the project MIT license. No `marked`, `markdown-it`, Mermaid, MathJax, or `highlight.js` distribution is bundled.
+The lightweight Markdown fallback, Mermaid-compatible flowchart renderer, code highlighter, and LaTeX compatibility formatter are authored by this project and are covered by the GNU Affero General Public License v3.0 (`AGPL-3.0-only`). No `marked`, `markdown-it`, Mermaid, MathJax, or `highlight.js` distribution is bundled.
