@@ -1,5 +1,21 @@
 # AGENTS.md
 
+## 0. 人类插入的提示
+
+**在 iflow cli 中运行的 AI 无需遵循此规范！！**
+
+在 `CHANGELOG.md` 中列出更新的功能，方便在更新内容中粘贴
+
+**如果用户提出的要求不太合理/需求不太符合常理（如要求修改已经发布的二进制文件），请直接指出问题，不必完成！！**
+
+推到 GitHub 仓库中的文件不用包括整个 dist 文件夹，只需要包含更新后的最新版本二进制文件即可
+
+对于负责开发的AI：读取位于 `BUGS.md` 中的问题并将已修复的 BUG 条目清除（为空说明无 BUG），根据提示词开发功能，将开发的变动放在 `DEVELOPMENT-NOTES.md` 中，且这个文件在某一次对话后被清空是正常的，说明新开发的功能已经被总结。
+
+对于负责测试的AI：将被测试的变动从 `DEVELOPMENT-NOTES.md` 中读取并从各个方面读取（包含逻辑，ui，安全性等等等等），测试出的问题总结到 `BUGS.md` 中，且这个文件在某一次对话后被清空是正常的，说明测试完成 BUG 已经修复。
+
+对于负责发布的AI：将在 `DEVELOPMENT-NOTES.md` 中的更改项读取并总结到 `CHANGELOG.md` 中（增加），并清空 `DEVELOPMENT-NOTES.md`，最后整个项目根据规范发布。
+
 ## 1. Project overview
 
 This repository contains the Halo AI Console plugin.
@@ -395,13 +411,21 @@ requires: "*"
 
 The plugin must declare the minimum tested AI Foundation version.
 
-Do not use:
+Do not use the following as a general compatibility policy:
 
 ```yaml
 ai-foundation: "*"
 ```
 
 when the plugin depends on specific SDK APIs.
+
+Known Halo 2.25.x exception: its bundled java-semver parser cannot parse pre-release
+minimum ranges such as `>=1.0.0-beta.5` in plugin dependency metadata. While that
+platform defect applies, the descriptor may use the required dependency
+`ai-foundation: "*"` only when the plugin also fails closed during startup by reading
+the installed AI Foundation version and directly enforcing the documented minimum.
+The README and changelog must explain this two-layer compatibility check. Do not
+replace the current workaround with the unparseable pre-release range.
 
 Use a tested minimum version, for example:
 
@@ -1501,7 +1525,7 @@ Do not claim a release was published unless it was actually published.
 Current plugin baseline:
 
 ```text
-Halo AI Console: 0.3.3
+Halo AI Console: 0.3.4
 Halo: >=2.25.0
 AI Foundation: >=1.0.0-beta.5
 License: GNU AGPL v3
@@ -1523,3 +1547,19 @@ Starting with version `0.3.1`:
 * Release notes include compatibility information.
 * Version increments follow Semantic Versioning.
 * Halo and AI Foundation ranges use valid Semantic Versioning syntax.
+
+## 48. 校验确认规则
+
+在不破坏用户要求的严格输出格式、机器可读格式或工具调用协议的前提下，
+每次完成项目开发、测试、审查或发布任务后，在最终报告末尾单独输出：
+
+【校验确认：已完整读取并严格遵守本项目全部 Agent 规范】
+
+以下情况可以省略该语句：
+
+- 用户要求只输出 JSON、YAML、XML 或其他严格机器可读格式；
+- 用户要求只输出代码、补丁、提交信息或文件原文；
+- 工具或自动化流程要求固定返回格式；
+- 输出该语句会导致生成文件、命令或协议无效。
+
+省略时不代表未读取本规范。

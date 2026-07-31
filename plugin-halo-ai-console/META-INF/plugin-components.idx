@@ -1,3 +1,4 @@
 run.halo.aichatconsole.extension.AiChatExtensionSchemeRegistrar
 run.halo.aichatconsole.api.HaloAiConsoleEndpoint
+run.halo.aichatconsole.service.AiFoundationCompatibilityVerifier
 run.halo.aichatconsole.service.AiFoundationModelInvoker

@@ -2,6 +2,28 @@
 
 本项目遵循 Semantic Versioning。历史制品一经发布即保持不变。
 
+## [0.3.4] - 2026-07-31
+
+### Changed
+
+- 将界面和用户提示中的通用技术术语恢复为 `Token` 和 `Job`，其他操作说明继续使用中文。
+
+### Fixed
+
+- 规避 Halo 2.25.x 对 AI Foundation 预发布依赖范围的解析缺陷，防止插件在安装阶段因 `LexerException` 失败。
+- 新增启动期兼容性校验；AI Foundation 缺失、版本无效或低于 `1.0.0-beta.5` 时，插件会失败关闭并提供可操作的升级提示。
+
+### Compatibility
+
+- Requires Halo `>=2.25.0`.
+- Requires AI Foundation `>=1.0.0-beta.5`.
+- 受 Halo 当前 java-semver 解析限制，`plugin.yaml` 使用必装依赖 `ai-foundation: "*"`；实际最低版本由插件启动校验器强制执行。
+- 未修改 API、存储格式、权限语义或模型调用逻辑。
+
+### Privacy
+
+- 未新增数据收集、第三方传输、遥测或外部资源。
+
 ## [0.3.3] - 2026-07-31
 
 ### Fixed

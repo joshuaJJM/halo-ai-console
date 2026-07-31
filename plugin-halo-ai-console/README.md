@@ -8,7 +8,7 @@ This project is not an official Halo project and does not use the official Halo 
 
 ## Features
 
-- Requires AI Foundation `>= 1.0.0-beta.5`.
+- Requires AI Foundation `>= 1.0.0-beta.5`. Because Halo 2.25.x cannot parse this pre-release range in plugin dependency metadata, the descriptor keeps AI Foundation as a required dependency with `*`, and a startup compatibility verifier enforces the actual minimum version before the plugin can start.
 - Adds a `Halo AI` console route and a settings / call-log route.
 - Uses the AI Foundation Java SDK for chat, multimodal input, summaries, and image generation. The Console API is used only to discover enabled model options.
 - `Default` model selection means the default model of the requested capability: language / multimodal for chat, image generation for `/image` or image mode.
@@ -70,9 +70,9 @@ The plugin installs these role templates:
 
 ## Build Artifact
 
-Current plugin version: `0.3.3`.
+Current plugin version: `0.3.4`.
 
-Local packaged jar: `dist/halo-ai-console-0.3.3.jar`.
+Local packaged jar: `dist/halo-ai-console-0.3.4.jar`.
 
 Historical packaged jars are committed under the repository `dist/` directory for quick download and regression comparison.
 
@@ -107,7 +107,7 @@ Report issues at [GitHub Issues](https://github.com/joshuaJJM/halo-ai-console/is
 ## Requirements
 
 - Halo `>= 2.25.0`
-- AI Foundation installed and enabled
+- AI Foundation `>= 1.0.0-beta.5` installed and enabled; the startup verifier enforces this minimum even though the descriptor uses the required `*` workaround for Halo 2.25.x
 - At least one enabled language / multimodal model for chat
 - At least one enabled image generation model for image mode
 - Halo attachment storage configured for image upload

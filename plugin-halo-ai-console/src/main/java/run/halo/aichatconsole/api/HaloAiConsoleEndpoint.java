@@ -1671,7 +1671,7 @@ public class HaloAiConsoleEndpoint implements CustomEndpoint {
         var data = configMap.getData() == null ? new LinkedHashMap<String, String>() : new LinkedHashMap<>(configMap.getData());
         var serialized = writeMapValue(job);
         if (serialized.length() > MAX_SESSION_JSON_LENGTH) {
-        throw new IllegalStateException("后台任务快照过大，无法安全保存。");
+        throw new IllegalStateException("Job 快照过大，无法安全保存。");
         }
         data.put("job", serialized);
         configMap.setData(data);
@@ -2245,7 +2245,7 @@ public class HaloAiConsoleEndpoint implements CustomEndpoint {
         throw tooManyRequests("一分钟内的 AI 请求次数已达到上限，请稍后重试。");
       }
       if (consumed + reservedTokens + prompt > dailyLimit) {
-        throw tooManyRequests("今日 AI 令牌配额已用尽，请联系管理员或明日再试。");
+        throw tooManyRequests("今日 AI Token 配额已用尽，请联系管理员或明日再试。");
       }
       var item = new LinkedHashMap<String, Object>();
       item.put("tokens", prompt);

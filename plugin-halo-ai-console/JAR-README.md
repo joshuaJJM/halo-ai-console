@@ -4,7 +4,7 @@ Halo AI Console is a community-maintained Halo Console plugin backed by AI Found
 
 This JAR provides AI chat, image generation, multimodal input, persisted conversations, background jobs, SSE updates, context management, model policy, and audit logs.
 
-Version: `0.3.3`
+Version: `0.3.4`
 
 The plugin is free. Model calls may incur API charges from third-party providers configured in AI Foundation; those charges are the responsibility of the Halo site administrator.
 
