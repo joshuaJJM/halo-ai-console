@@ -6,7 +6,7 @@ metadata:
     halo.run/role-template: "true"
   annotations:
     rbac.authorization.halo.run/module: "Halo AI Console"
-    rbac.authorization.halo.run/display-name: "Halo AI"
+    rbac.authorization.halo.run/display-name: "使用和管理自己的 AI 对话"
     rbac.authorization.halo.run/ui-permissions: |
       ["plugin:halo-ai-console:view","plugin:halo-ai-console:manage-own"]
 rules:
@@ -42,7 +42,7 @@ metadata:
     rbac.authorization.halo.run/dependencies: |
       ["role-template-halo-ai-console-view-and-manage-own"]
     rbac.authorization.halo.run/module: "Halo AI Console"
-    rbac.authorization.halo.run/display-name: "View own AI audit logs"
+    rbac.authorization.halo.run/display-name: "查看自己的 AI 审计日志"
     rbac.authorization.halo.run/ui-permissions: |
       ["plugin:halo-ai-console:audit"]
 rules:
@@ -60,7 +60,7 @@ metadata:
     rbac.authorization.halo.run/dependencies: |
       ["role-template-halo-ai-console-view-and-manage-own"]
     rbac.authorization.halo.run/module: "Halo AI Console"
-    rbac.authorization.halo.run/display-name: "Manage Halo AI Console"
+    rbac.authorization.halo.run/display-name: "管理 Halo AI Console"
     rbac.authorization.halo.run/ui-permissions: |
       ["plugin:halo-ai-console:admin","plugin:halo-ai-console:call-log-all"]
 rules:

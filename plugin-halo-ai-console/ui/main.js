@@ -617,6 +617,77 @@
     return String(count);
   }
 
+  function modelTypeLabel(type) {
+    const value = String(type || "").toLowerCase().replace(/[-_\s]/g, "");
+    const labels = {
+      language: "语言",
+      chat: "对话",
+      multimodal: "多模态",
+      vision: "视觉",
+      image: "图像生成",
+      "image-generation": "图像生成",
+      imagegeneration: "图像生成",
+      texttoimage: "文生图",
+    };
+    return labels[value] || "模型";
+  }
+
+  function operationLabel(operation) {
+    const labels = {
+      chat: "对话",
+      image: "图像生成",
+      summary: "生成摘要",
+      compress: "压缩上下文",
+      title: "生成标题",
+      upload: "上传文件",
+      migration: "迁移数据",
+    };
+    return labels[String(operation || "").toLowerCase()] || operation || "未知操作";
+  }
+
+  function statusLabel(status) {
+    const labels = {
+      pending: "等待中",
+      running: "生成中",
+      success: "成功",
+      completed: "已完成",
+      error: "失败",
+      failed: "失败",
+      cancelled: "已取消",
+      canceled: "已取消",
+      interrupted: "已中断",
+      empty: "结果为空",
+    };
+    return labels[String(status || "").toLowerCase()] || status || "未知状态";
+  }
+
+  function tagLabel(tag) {
+    const labels = {
+      image: "图像",
+      code: "代码",
+      error: "错误",
+      config: "配置",
+      security: "安全",
+      summary: "摘要",
+    };
+    return labels[String(tag || "").toLowerCase()] || tag;
+  }
+
+  function resourceLabel(resource) {
+    const labels = {
+      sessions: "会话",
+      jobs: "后台任务",
+      usage: "用量记录",
+      auditLogs: "审计日志",
+      personalStore: "个人设置与缓存",
+    };
+    return labels[resource] || resource || "未知资源";
+  }
+
+  function clientLabel(value) {
+    return String(value || "") === "Other" ? "其他" : (value || "-");
+  }
+
   function modelContextLimit(model) {
     const raw = model?.raw || {};
     const candidates = [
@@ -778,7 +849,7 @@
       const contextUsedPercent = computed(() => Math.min(100, Math.round((contextUsed.value / Math.max(1, contextLimit.value)) * 100)));
       const selectableModels = computed(() => [
         { label: "默认", value: "default" },
-        ...allowedModels.value.map((item) => ({ label: `${item.label} (${item.modelType || "model"})`, value: item.name })),
+        ...allowedModels.value.map((item) => ({ label: `${item.label}（${modelTypeLabel(item.modelType)}）`, value: item.name })),
       ]);
 
       function persist() {
@@ -861,14 +932,14 @@
         if (!older.length || !model) return;
         contextCompressing.value = true;
         try {
-          const source = older.map((message) => `${message.role === "user" ? "User" : "AI"}: ${message.content || ""}${message.reasoning ? `\nReasoning: ${message.reasoning}` : ""}`).join("\n\n");
+          const source = older.map((message) => `${message.role === "user" ? "用户" : "AI"}：${message.content || ""}${message.reasoning ? `\n思考过程：${message.reasoning}` : ""}`).join("\n\n");
           const result = await generateText(model, [{
                 id: uid("auto-compress-user"),
                 role: "user",
                 parts: [{
                   type: "text",
                   id: uid("auto-compress-text"),
-                  text: `Summarize these old messages for future context. Preserve key facts, user preferences, constraints, decisions, unresolved tasks, names, URLs, filenames, and exact errors. Keep it concise.\n\n${source}`,
+                  text: `请将这些较早的消息压缩为供后续对话使用的上下文摘要。保留关键事实、用户偏好、约束、决定、未解决事项、名称、URL、文件名和准确错误信息，并尽量简洁。\n\n${source}`,
                 }],
               }], 1200);
           const summary = String(result.text || "").trim();
@@ -876,7 +947,7 @@
           const now = Date.now();
           current.value.memory = [current.value.memory, summary].filter(Boolean).join("\n\n").slice(-12000);
           current.value.messages = [
-            { id: uid("summary"), role: "assistant", content: `Context summary:\n\n${summary}`, createdAt: now - 1 },
+            { id: uid("summary"), role: "assistant", content: `上下文摘要：\n\n${summary}`, createdAt: now - 1 },
             ...recent,
           ];
           current.value.contextClearedAt = 0;
@@ -1162,7 +1233,7 @@
         const url = status.permalink || status.url || spec.permalink || spec.url || spec.externalLink || spec.displayName;
         if (!url || !String(url).startsWith("/")) {
           if (!/^https?:\/\//.test(String(url || ""))) {
-            throw new Error("Attachment upload succeeded but returned no usable URL.");
+            throw new Error("附件上传成功，但没有返回可用的访问地址。");
           }
         }
         return {
@@ -1178,7 +1249,7 @@
         try {
           await addPickedFiles(event.target.files);
         } catch (err) {
-          error.value = err?.response?.data?.detail || err?.message || "Image upload failed.";
+          error.value = err?.response?.data?.detail || err?.message || "图片上传失败，请检查文件后重试。";
         }
         event.target.value = "";
       }
@@ -1198,7 +1269,7 @@
         try {
           await addPickedFiles(event.dataTransfer?.files);
         } catch (err) {
-          error.value = err?.response?.data?.detail || err?.message || "Image upload failed.";
+          error.value = err?.response?.data?.detail || err?.message || "图片上传失败，请检查文件后重试。";
         }
       }
 
@@ -1258,7 +1329,7 @@
             parts: [{
               type: "text",
               id: uid("memory-text"),
-              text: `Long-term memory and knowledge references. Use these facts when relevant, but do not mention them unless useful:\n\n${memory}`,
+              text: `以下是长期记忆和知识引用。请在相关时使用这些事实，但除非确有帮助，否则不要主动提及它们：\n\n${memory}`,
             }],
           });
         }
@@ -1317,7 +1388,7 @@
             return job;
           }
           if (job.status === "error") {
-            throw new Error(job.error || "AI generation failed.");
+            throw new Error(job.error || "AI 生成失败，请稍后重试。");
           }
           if (job.status === "cancelled") {
             throw new DOMException("Aborted", "AbortError");
@@ -1356,7 +1427,7 @@
             if (job.status === "success") {
               finish(resolve, job);
             } else if (job.status === "error") {
-              finish(reject, new Error(job.error || "AI generation failed."));
+              finish(reject, new Error(job.error || "AI 生成失败，请稍后重试。"));
             } else if (job.status === "cancelled") {
               finish(reject, new DOMException("Aborted", "AbortError"));
             }
@@ -1515,7 +1586,7 @@
       }
 
       function exportMessage(message) {
-        const name = `${current.value?.title || "ai-message"}-${message.id || Date.now()}.md`.replace(/[\\/:*?"<>|]/g, "-");
+        const name = `${current.value?.title || "AI回复"}-${message.id || Date.now()}.md`.replace(/[\\/:*?"<>|]/g, "-");
         const text = [message.reasoning ? `## 思考过程\n\n${message.reasoning}` : "", `## 回复\n\n${message.content || ""}`].filter(Boolean).join("\n\n");
         downloadText(name, text);
       }
@@ -1722,14 +1793,14 @@
             message.role === "assistant" ? h("div", { class: "message-actions" }, [
               h("button", { onClick: () => copyMarkdown(message) }, "复制 MD"),
               h("button", { onClick: () => copyPlainText(message) }, "复制纯文本"),
-              h("button", { onClick: () => exportMessage(message) }, "📄 Export"),
-              h("button", { disabled: loading.value, onClick: () => retryMessage(message) }, "🔄 Retry"),
-              h("button", { onClick: () => toggleFavorite(message) }, (message._sourceMessage || message).favorite ? "⭐ Unfavorite" : "⭐ Favorite"),
+              h("button", { onClick: () => exportMessage(message) }, "📄 导出"),
+              h("button", { disabled: loading.value, onClick: () => retryMessage(message) }, "🔄 重试"),
+              h("button", { onClick: () => toggleFavorite(message) }, (message._sourceMessage || message).favorite ? "⭐ 取消收藏" : "⭐ 收藏"),
             ]) : null,
             message.role === "user" && editingMessageId.value !== message.id ? h("div", { class: "message-actions" }, [
               h("button", { onClick: () => startEditMessage(message) }, "编辑"),
             ]) : null,
-            message.totalTokens ? h("div", { class: "token-stats" }, `tokens ≈ ${message.totalTokens}（输入 ${message.promptTokens || 0} / 输出 ${message.completionTokens || 0}）`) : null,
+            message.totalTokens ? h("div", { class: "token-stats" }, `令牌数约 ${message.totalTokens}（输入 ${message.promptTokens || 0} / 输出 ${message.completionTokens || 0}）`) : null,
           ]),
         ]);
       }
@@ -1749,12 +1820,12 @@
           onClick: toggleSidebar,
         }, sidebarCollapsed.value ? "›" : "‹"),
         h("aside", { class: "ai-chat-sidebar" }, [
-          h("div", { class: "brand" }, [h("strong", "Halo AI"), h("span", "Console Assistant")]),
+          h("div", { class: "brand" }, [h("strong", "Halo AI"), h("span", "控制台助手")]),
           h("div", { class: "sidebar-actions" }, [
             h(Button, { type: "primary", size: "sm", onClick: newSession }, () => "新建聊天"),
             h(Button, { size: "sm", onClick: clearContext }, () => "清除上下文"),
             h(Button, { size: "sm", onClick: cleanCurrentSession }, () => "清理错误"),
-            h(Button, { size: "sm", onClick: () => { showFavoritesOnly.value = !showFavoritesOnly.value; } }, () => showFavoritesOnly.value ? "All" : "Favorites"),
+            h(Button, { size: "sm", onClick: () => { showFavoritesOnly.value = !showFavoritesOnly.value; } }, () => showFavoritesOnly.value ? "全部消息" : "收藏消息"),
           ]),
           h("input", {
             class: "session-search",
@@ -1804,7 +1875,7 @@
               class: "context-meter",
               type: "button",
               style: { "--context-used": `${contextUsedPercent.value}%` },
-              title: `当前上下文约 ${contextUsed.value} tokens，剩余约 ${contextRemaining.value} / ${contextLimit.value}。点击压缩上下文。`,
+              title: `当前上下文约使用 ${contextUsed.value} 个令牌，剩余约 ${contextRemaining.value} / ${contextLimit.value}。点击压缩上下文。`,
               disabled: contextCompressing.value,
               onClick: compressContext,
             }, [
@@ -1815,7 +1886,7 @@
             h(Button, { size: "sm", onClick: refreshModels }, () => "刷新模型"),
           ]),
           conversationTags.value.length ? h("div", { class: "conversation-tags" }, conversationTags.value.map((tag) =>
-            h("button", { type: "button", onClick: () => { sessionQuery.value = tag; } }, `#${tag}`)
+            h("button", { type: "button", onClick: () => { sessionQuery.value = tag; } }, `#${tagLabel(tag)}`)
           )) : null,
           error.value && h("div", { class: "ai-chat-error" }, error.value),
           h("section", { ref: chatEl, class: "halo-ai-messages", onScroll: handleMessagesScroll }, (showFavoritesOnly.value ? favoriteMessages.value.length : current.value.messages.length)
@@ -1904,23 +1975,23 @@
         saveCallLogs([]);
       };
       const exportOwnData = async () => {
-        dataMessage.value = "正在准备导出。日志和后台 Job 各最多导出 10,000 条，附件仅导出引用信息。";
+        dataMessage.value = "正在准备导出。日志和后台任务各最多导出 10,000 条，附件仅导出引用信息。";
         try {
           const { data } = await axios.get(`${CHAT_API}/me/export`);
           downloadText(`halo-ai-console-data-${Date.now()}.json`, JSON.stringify(data, null, 2));
-          dataMessage.value = "导出完成。日志和后台 Job 各最多包含 10,000 条，附件文件本身不会包含在导出 JSON 中。";
+          dataMessage.value = "导出完成。日志和后台任务各最多包含 10,000 条，附件文件本身不会包含在导出文件中。";
         } catch (cause) {
           dataMessage.value = `个人数据导出失败：${cause?.response?.data?.detail || cause?.message || "请求失败"}`;
         }
       };
       const deleteOwnData = async () => {
-        if (!window.confirm("这会删除你的会话、Job、图片缓存、用量记录和个人设置；是否继续？审计日志是否删除由管理员策略决定。该操作不会删除 Halo 附件库中的上传文件，请前往附件管理单独删除。")) return;
+        if (!window.confirm("这会删除你的会话、后台任务、图片缓存、用量记录和个人设置；是否继续？审计日志是否删除由管理员策略决定。该操作不会删除 Halo 附件库中的上传文件，请前往附件管理单独删除。")) return;
         try {
           const { data } = await axios.delete(`${CHAT_API}/me/data`);
           [STORE_KEY, SELECTED_KEY, SETTINGS_KEY, LOG_KEY].forEach((key) => localStorage.removeItem(key));
           const failures = Array.isArray(data?.failures) ? data.failures : [];
           if (failures.length) {
-            const details = failures.map((item) => `${item.resource || "unknown"}: ${item.error || "删除失败"}`).join("；");
+          const details = failures.map((item) => `${resourceLabel(item.resource)}：${item.error || "删除失败"}`).join("；");
             dataMessage.value = `个人数据已部分删除，仍有 ${failures.length} 项失败：${details}。请修复后重试。Halo 附件库中的上传文件不会由此操作删除，请前往附件管理单独删除。`;
             return;
           }
@@ -1998,11 +2069,11 @@
           logError.value ? h("p", { class: "settings-error" }, logError.value) : null,
           logs.value.length
             ? h("div", { class: "call-log-list" }, logs.value.map((log) => h("div", { class: "call-log-item" }, [
-              h("strong", `${log.owner || "当前用户"} · ${log.operation || log.type || "chat"}`),
-              h("span", `${log.model || "-"} · tokens≈${log.totalTokens || 0}`),
-              h("span", `${new Date(log.time).toLocaleString()} · ${log.durationMs || 0}ms`),
-              h("span", `${log.ipAddress || "-"} · ${log.browser || "-"} / ${log.operatingSystem || "-"}`),
-              h("small", `${log.status || "-"} · ${log.sessionTitle || log.sessionId || ""}`),
+              h("strong", `${log.owner || "当前用户"} · ${operationLabel(log.operation || log.type)}`),
+              h("span", `${log.model || "-"} · 令牌数约 ${log.totalTokens || 0}`),
+              h("span", `${new Date(log.time).toLocaleString()} · ${log.durationMs || 0} 毫秒`),
+              h("span", `${log.ipAddress || "-"} · ${clientLabel(log.browser)} / ${clientLabel(log.operatingSystem)}`),
+              h("small", `${statusLabel(log.status)} · ${log.sessionTitle || log.sessionId || ""}`),
             ])))
             : h("p", "暂无审计记录。"),
         ]),

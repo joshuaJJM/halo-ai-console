@@ -70,9 +70,9 @@ The plugin installs these role templates:
 
 ## Build Artifact
 
-Current plugin version: `0.3.1`.
+Current plugin version: `0.3.2`.
 
-Local packaged jar: `dist/halo-ai-console-0.3.1.jar`.
+Local packaged jar: `dist/halo-ai-console-0.3.2.jar`.
 
 Historical packaged jars are committed under the repository `dist/` directory for quick download and regression comparison.
 
@@ -82,7 +82,7 @@ Halo AI Console 是社区维护的 Halo Console 插件，不是 Halo 官方插�
 
 插件本身免费。使用模型可能产生由 AI Foundation 中配置的第三方服务商收取的 API 费用，费用由 Halo 站点管理员承担。停用相关模型、删除 API 配置或禁用插件即可停止新的调用。
 
-聊天历史、Job、调用日志、图片缓存和个人设置使用 Halo ConfigMap 存储。设置页提供“导出我的数据”和“删除我的数据”：删除会话、Job、图片缓存、用量记录和个人设置；审计日志是否删除由管理员策略决定，Halo 附件仍需在附件管理中单独删除。完整说明见仓库根目录的 [`PRIVACY.md`](../PRIVACY.md)。
+聊天历史、后台任务、调用日志、图片缓存和个人设置使用 Halo ConfigMap 存储。设置页提供“导出我的数据”和“删除我的数据”：删除会话、后台任务、图片缓存、用量记录和个人设置；审计日志是否删除由管理员策略决定，Halo 附件仍需在附件管理中单独删除。完整说明见仓库根目录的 [`PRIVACY.md`](../PRIVACY.md)。
 
 ### AI Foundation 模型调用
 

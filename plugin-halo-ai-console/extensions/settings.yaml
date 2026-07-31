@@ -11,51 +11,51 @@ spec:
           name: defaultLanguageModelMode
           label: 默认语言模型
           value: default
-          help: 选择“默认”时使用 AI Foundation 中对应能力的默认模型；选择“指定模型名”时填写下方模型 name。
+          help: 选择“默认”时使用 AI Foundation 中对应能力的默认模型；选择“指定模型”时填写下方模型标识。
           options:
             - label: 默认
               value: default
-            - label: 指定模型名
+            - label: 指定模型
               value: custom
         - $formkit: text
           name: defaultLanguageModel
-          label: 指定语言模型 name
-          help: 仅在上方选择“指定模型名”时生效，必须是 AI Foundation 模型 name。
+          label: 指定语言模型标识
+          help: 仅在上方选择“指定模型”时生效，必须填写 AI Foundation 中的模型标识。
           value: ""
         - $formkit: select
           name: defaultMultimodalModelMode
           label: 默认多模态模型
           value: default
-          help: 选择“默认”时使用 AI Foundation 中支持图片输入的默认模型；选择“指定模型名”时填写下方模型 name。
+          help: 选择“默认”时使用 AI Foundation 中支持图片输入的默认模型；选择“指定模型”时填写下方模型标识。
           options:
             - label: 默认
               value: default
-            - label: 指定模型名
+            - label: 指定模型
               value: custom
         - $formkit: text
           name: defaultMultimodalModel
-          label: 指定多模态模型 name
-          help: 仅在上方选择“指定模型名”时生效，必须是支持图片输入的语言模型 name。
+          label: 指定多模态模型标识
+          help: 仅在上方选择“指定模型”时生效，必须填写支持图片输入的语言模型标识。
           value: ""
         - $formkit: select
           name: defaultImageModelMode
           label: 默认图像生成模型
           value: default
-          help: 选择“默认”时使用 AI Foundation 中图像生成能力的默认模型；选择“指定模型名”时填写下方模型 name。
+          help: 选择“默认”时使用 AI Foundation 中图像生成能力的默认模型；选择“指定模型”时填写下方模型标识。
           options:
             - label: 默认
               value: default
-            - label: 指定模型名
+            - label: 指定模型
               value: custom
         - $formkit: text
           name: defaultImageModel
-          label: 指定图像生成模型 name
-          help: 仅在上方选择“指定模型名”时生效，必须是图像生成模型 name。
+          label: 指定图像生成模型标识
+          help: 仅在上方选择“指定模型”时生效，必须填写图像生成模型标识。
           value: ""
         - $formkit: textarea
           name: allowedModels
           label: 允许用户使用的模型列表
-          help: 每行或用英文逗号填写一个 AI Foundation 模型 name。留空表示允许所有已启用模型。
+          help: 每行或用英文逗号填写一个 AI Foundation 模型标识。留空表示允许所有已启用模型。
           value: ""
         - $formkit: number
           name: imageMaxSizeMb
@@ -77,7 +77,7 @@ spec:
           max: 300
         - $formkit: number
           name: dailyTokenLimit
-          label: 每日最大 token 消耗
+          label: 每日最大令牌消耗
           value: 200000
           min: 1000
           max: 10000000
@@ -108,7 +108,7 @@ spec:
           max: 50
         - $formkit: number
           name: jobRetentionDays
-          label: Job 保留天数
+          label: 后台任务保留天数
           value: 7
           min: 1
           max: 365
@@ -121,7 +121,7 @@ spec:
         - $formkit: number
           name: imageCacheRetentionDays
           label: 图片缓存保留天数
-          help: 到期后清理插件保存的图片缓存元数据和受限制的 data URL，不删除 Halo 附件库中的原始附件。
+          help: 到期后清理插件保存的图片缓存元数据和受限制的内嵌图片数据，不删除 Halo 附件库中的原始附件。
           value: 30
           min: 1
           max: 3650
@@ -137,7 +137,7 @@ spec:
               value: true
         - $formkit: number
           name: maxJobsPerUser
-          label: 每用户最多保留 Job 数
+          label: 每用户最多保留后台任务数
           value: 500
           min: 50
           max: 10000

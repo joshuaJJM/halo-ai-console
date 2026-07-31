@@ -137,7 +137,7 @@ public class AiFoundationModelInvoker {
       }
     }
     if (parts.isEmpty()) {
-      throw new IllegalArgumentException("Message has no supported parts.");
+      throw new IllegalArgumentException("消息中没有可处理的内容。");
     }
     return new ModelMessage(role, parts);
   }
@@ -209,7 +209,7 @@ public class AiFoundationModelInvoker {
       url = baseUrl.replaceFirst("/+$", "") + url;
     }
     if (!hasText(url)) {
-      throw new IllegalArgumentException("Media content requires data or URL.");
+      throw new IllegalArgumentException("媒体内容必须包含数据或访问地址。");
     }
     return DataContent.url(url,
       hasText(mediaType) ? mediaType : "application/octet-stream", filename);

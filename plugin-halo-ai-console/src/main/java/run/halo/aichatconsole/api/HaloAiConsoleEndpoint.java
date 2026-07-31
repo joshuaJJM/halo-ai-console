@@ -218,7 +218,7 @@ public class HaloAiConsoleEndpoint implements CustomEndpoint {
           var maxImageBytes = maxImageBytes(settings);
           var messages = listOfMaps(body.get("messages"));
           if (messages.size() > MAX_MESSAGES_PER_SESSION) {
-            throw badRequest("Too many messages in one session.");
+            throw badRequest("单个会话中的消息数量超过限制。");
           }
           var session = sessionFromMap(name, owner, body);
           var savedMessages = messages.stream()
@@ -297,9 +297,9 @@ public class HaloAiConsoleEndpoint implements CustomEndpoint {
           result.put("failures", failures);
           result.put("message", failures.isEmpty()
             ? (deleteAuditLogs
-              ? "Personal chat data and audit logs were deleted. Halo attachments were not deleted and must be removed separately."
-              : "Personal chat data was deleted. Audit logs were retained by administrator policy. Halo attachments were not deleted and must be removed separately.")
-            : "Some personal data could not be deleted. Review failures and retry after resolving the reported errors. Halo attachments were not deleted.");
+              ? "个人聊天数据和审计日志已删除。Halo 附件未被删除，需要单独处理。"
+              : "个人聊天数据已删除。根据管理员策略，审计日志已保留。Halo 附件未被删除，需要单独处理。")
+            : "部分个人数据未能删除。请查看失败明细，解决问题后重试。Halo 附件未被删除。");
           return result;
         })
         .flatMap(result -> ServerResponse.ok().bodyValue(result));
@@ -386,7 +386,7 @@ public class HaloAiConsoleEndpoint implements CustomEndpoint {
         .contentType(MediaType.valueOf("application/javascript"))
         .bodyValue(input.readAllBytes());
     } catch (IOException e) {
-      return Mono.error(new ResponseStatusException(HttpStatus.INTERNAL_SERVER_ERROR, "Unable to read DOMPurify asset."));
+      return Mono.error(new ResponseStatusException(HttpStatus.INTERNAL_SERVER_ERROR, "无法读取 DOMPurify 资源。"));
     }
   }
 
@@ -407,12 +407,12 @@ public class HaloAiConsoleEndpoint implements CustomEndpoint {
         var globalSettings = tuple.getT2();
         var model = limitString(request.pathVariable("name"), 253);
         if (model.isBlank()) {
-          throw badRequest("Model is required.");
+          throw badRequest("必须选择模型。");
         }
         enforceAllowedModel(model, globalSettings);
         var messages = listOfMaps(body.get("messages"));
         if (messages.isEmpty()) {
-          throw badRequest("Messages are required.");
+          throw badRequest("消息不能为空。");
         }
         validateAiRequestMessages(messages, globalSettings);
         var maxOutputTokens = clampInt(body.get("maxOutputTokens"), 1, 8192, 1200);
@@ -439,21 +439,21 @@ public class HaloAiConsoleEndpoint implements CustomEndpoint {
           var sessionBody = castMapValue(body.get("session"));
           var sessionId = safeName("chat", stringValue(sessionBody.get("id")));
           if (sessionId.isBlank()) {
-            throw badRequest("Session id is required.");
+            throw badRequest("缺少会话标识。");
           }
           var assistant = castMapValue(body.get("assistant"));
           var assistantId = stringValue(assistant.get("id"));
           if (assistantId.isBlank()) {
-            throw badRequest("Assistant message id is required.");
+            throw badRequest("缺少 AI 回复消息标识。");
           }
           var model = stringValue(body.get("model"));
           if (model.isBlank()) {
-            throw badRequest("Model is required.");
+            throw badRequest("必须选择模型。");
           }
           enforceAllowedModel(model, globalSettings);
           var requestMessages = listOfMaps(body.get("requestMessages"));
           if (requestMessages.isEmpty()) {
-            throw badRequest("Request messages are required.");
+            throw badRequest("请求消息不能为空。");
           }
           validateAiRequestMessages(requestMessages, globalSettings);
           var normalizedSession = normalizeSessionSnapshot(sessionId, owner, sessionBody, maxImageBytes(settings));
@@ -505,7 +505,7 @@ public class HaloAiConsoleEndpoint implements CustomEndpoint {
         var prompt = limitString(stringValue(body.get("prompt")), 12_000);
         var payload = castMapValue(body.get("payload"));
         if (sessionId.isBlank() || assistantId.isBlank() || model.isBlank() || prompt.isBlank()) {
-          throw badRequest("Image job requires session id, assistant id, model, and prompt.");
+            throw badRequest("图像生成任务缺少会话标识、AI 回复标识、模型或提示词。");
         }
         enforceAllowedModel(model, globalSettings);
         validateImagePayload(payload, globalSettings);
@@ -777,24 +777,24 @@ public class HaloAiConsoleEndpoint implements CustomEndpoint {
         var file = firstFile(parts);
         var maxImageBytes = maxImageBytes(settings);
         if (file == null) {
-          throw badRequest("Image file is required.");
+          throw badRequest("请选择要上传的图片。");
         }
         var mediaType = file.headers().getContentType();
         if (mediaType == null || !mediaType.toString().startsWith("image/")) {
-          throw badRequest("Only image uploads are supported.");
+          throw badRequest("当前上传入口仅支持图片。");
         }
         var declaredLength = file.headers().getContentLength();
         if (declaredLength > maxImageBytes || declaredLength > HARD_MAX_IMAGE_BYTES) {
-          throw badRequest("Image file exceeds the configured size limit.");
+          throw badRequest("图片大小超过管理员配置的上限。");
         }
         return DataBufferUtils.join(file.content(), (int) Math.min(maxImageBytes, HARD_MAX_IMAGE_BYTES) + 1)
-          .onErrorMap(DataBufferLimitException.class, e -> badRequest("Image file exceeds the configured size limit."))
+          .onErrorMap(DataBufferLimitException.class, e -> badRequest("图片大小超过管理员配置的上限。"))
           .flatMap(buffer -> {
             try {
               var bytes = new byte[buffer.readableByteCount()];
               buffer.read(bytes);
               if (bytes.length > maxImageBytes || bytes.length > HARD_MAX_IMAGE_BYTES) {
-                throw badRequest("Image file exceeds the configured size limit.");
+                throw badRequest("图片大小超过管理员配置的上限。");
               }
               return forwardAttachmentUpload(request, file, bytes, mediaType);
             } finally {
@@ -1191,20 +1191,20 @@ public class HaloAiConsoleEndpoint implements CustomEndpoint {
     AiFoundationModelInvoker.TextDelta delta) {
     if ("error".equals(delta.type())) {
       return Mono.error(new IllegalStateException(delta.error().isBlank()
-        ? "AI Foundation stream failed."
+        ? "AI Foundation 流式生成失败。"
         : delta.error()));
     }
     var maxOutput = clampInt(state.get("maxOutputCharacters"), 4000,
       MAX_STREAM_TEXT_LENGTH, MAX_STREAM_TEXT_LENGTH);
     if ("reasoning".equals(delta.type())) {
       appendOutputLimited(state, "reasoning", delta.text(), maxOutput,
-        "AI output exceeded the maximum length.");
+        "AI 输出超过最大长度限制。");
     } else if ("text".equals(delta.type())) {
       if (!stringValue(state.get("reasoning")).isBlank()) {
         state.put("reasoningOpen", false);
       }
       appendOutputLimited(state, "content", delta.text(), maxOutput,
-        "AI output exceeded the maximum length.");
+        "AI 输出超过最大长度限制。");
     } else {
       return Mono.empty();
     }
@@ -1222,7 +1222,7 @@ public class HaloAiConsoleEndpoint implements CustomEndpoint {
     var maxOutput = clampInt(state.get("maxOutputCharacters"), 4000,
       MAX_STREAM_TEXT_LENGTH, MAX_STREAM_TEXT_LENGTH);
     if (reasoning.length() + content.length() > maxOutput) {
-      throw new IllegalStateException("AI output exceeded the maximum length.");
+      throw new IllegalStateException("AI 输出超过最大长度限制。");
     }
     if (!reasoning.isBlank()) {
       state.put("reasoning", reasoning);
@@ -1476,11 +1476,11 @@ public class HaloAiConsoleEndpoint implements CustomEndpoint {
   private AiChatMessage messageFromMap(String sessionId, String owner, Map<String, Object> body, long maxImageBytes) {
     var id = stringValue(body.get("id"));
     if (id.isBlank()) {
-      throw badRequest("Message id is required.");
+      throw badRequest("缺少消息标识。");
     }
     var role = stringValue(body.get("role"));
     if (!ROLES.contains(role)) {
-      throw badRequest("Unsupported message role.");
+      throw badRequest("不支持该消息角色。");
     }
     var message = new AiChatMessage();
     message.setMetadata(metadata(messageName(sessionId, id)));
@@ -1671,7 +1671,7 @@ public class HaloAiConsoleEndpoint implements CustomEndpoint {
         var data = configMap.getData() == null ? new LinkedHashMap<String, String>() : new LinkedHashMap<>(configMap.getData());
         var serialized = writeMapValue(job);
         if (serialized.length() > MAX_SESSION_JSON_LENGTH) {
-          throw new IllegalStateException("Job snapshot is too large to save safely.");
+        throw new IllegalStateException("后台任务快照过大，无法安全保存。");
         }
         data.put("job", serialized);
         configMap.setData(data);
@@ -2207,7 +2207,7 @@ public class HaloAiConsoleEndpoint implements CustomEndpoint {
   private void enforceAllowedModel(String model, Map<String, Object> globalSettings) {
     var allowedModels = listOfStrings(globalSettings.get("allowedModels"));
     if (!allowedModels.isEmpty() && !allowedModels.contains(model)) {
-      throw new ResponseStatusException(HttpStatus.FORBIDDEN, "This model is not allowed by plugin settings.");
+      throw new ResponseStatusException(HttpStatus.FORBIDDEN, "插件设置不允许使用该模型，请联系管理员。");
     }
   }
 
@@ -2239,13 +2239,13 @@ public class HaloAiConsoleEndpoint implements CustomEndpoint {
         .mapToInt(item -> intValue(item.get("tokens")) == null ? 0 : intValue(item.get("tokens")))
         .sum();
       if (running >= maxConcurrent) {
-        throw tooManyRequests("Too many concurrent AI jobs.");
+        throw tooManyRequests("并发 AI 任务过多，请等待现有任务完成后重试。");
       }
       if (requestTimes.size() >= perMinute) {
-        throw tooManyRequests("Too many AI requests in one minute.");
+        throw tooManyRequests("一分钟内的 AI 请求次数已达到上限，请稍后重试。");
       }
       if (consumed + reservedTokens + prompt > dailyLimit) {
-        throw tooManyRequests("Daily AI token quota exceeded.");
+        throw tooManyRequests("今日 AI 令牌配额已用尽，请联系管理员或明日再试。");
       }
       var item = new LinkedHashMap<String, Object>();
       item.put("tokens", prompt);
@@ -2317,7 +2317,7 @@ public class HaloAiConsoleEndpoint implements CustomEndpoint {
   private Mono<Void> requireAdminPermission(ServerRequest request) {
     return request.principal()
       .filter(principal -> principal instanceof Authentication authentication && hasAdminPermission(authentication))
-      .switchIfEmpty(Mono.error(new ResponseStatusException(HttpStatus.FORBIDDEN, "AI chat admin permission is required.")))
+      .switchIfEmpty(Mono.error(new ResponseStatusException(HttpStatus.FORBIDDEN, "该操作需要 AI 聊天管理权限。")))
       .then();
   }
 
@@ -2406,7 +2406,7 @@ public class HaloAiConsoleEndpoint implements CustomEndpoint {
   private String cleanAiFoundationError(Throwable error) {
     var message = error == null ? "" : stringValue(error.getMessage());
     if (message.isBlank()) {
-      return "AI Foundation request failed.";
+      return "AI Foundation 请求失败，请检查模型配置后重试。";
     }
     var parsed = readMapValue(message);
     var detail = stringValue(firstNonBlank(parsed.get("detail"), parsed.get("title"), parsed.get("message")));
@@ -2443,13 +2443,13 @@ public class HaloAiConsoleEndpoint implements CustomEndpoint {
     }
     if (text.startsWith("http://") || text.startsWith("https://") || text.startsWith("/")) {
       if (text.length() > 2048) {
-        throw new IllegalStateException("Generated image URL exceeds the maximum length.");
+        throw new IllegalStateException("生成图片的访问地址超过最大长度限制。");
       }
       return text;
     }
     if (text.startsWith("data:image/")) {
       if (text.length() > MAX_DATA_URL_LENGTH) {
-        throw new IllegalStateException("Generated image data exceeds the maximum length.");
+        throw new IllegalStateException("生成图片的数据超过最大长度限制。");
       }
       validateDataUrlSize(text, maxImageBytes);
       return text;
@@ -2458,14 +2458,14 @@ public class HaloAiConsoleEndpoint implements CustomEndpoint {
       return "";
     }
     if (text.length() > MAX_DATA_URL_LENGTH) {
-      throw new IllegalStateException("Generated image data exceeds the maximum length.");
+      throw new IllegalStateException("生成图片的数据超过最大长度限制。");
     }
     if (!text.matches("^[A-Za-z0-9+/=\\r\\n]+$")) {
       return "";
     }
     var payloadLength = text.codePoints().filter(code -> !Character.isWhitespace(code)).count();
     if (payloadLength * 3L / 4L > maxImageBytes || payloadLength * 3L / 4L > HARD_MAX_IMAGE_BYTES) {
-      throw new IllegalStateException("Generated image payload exceeds the configured size limit.");
+      throw new IllegalStateException("生成图片的数据超过管理员配置的大小上限。");
     }
     return text;
   }
@@ -2587,7 +2587,7 @@ public class HaloAiConsoleEndpoint implements CustomEndpoint {
     var maxImages = clampInt(globalSettings.get("maxImagesPerRequest"), 0, 50, MAX_REQUEST_IMAGES);
     var maxImageBytes = maxImageBytes(globalSettings);
     if (messages.size() > maxMessages) {
-      throw badRequest("Too many messages in AI context.");
+      throw badRequest("发送给 AI 的上下文消息数量超过限制。");
     }
     var chars = 0;
     var images = 0;
@@ -2595,23 +2595,23 @@ public class HaloAiConsoleEndpoint implements CustomEndpoint {
     for (var message : messages) {
       var messageId = stringValue(message.get("id"));
       if (messageId.isBlank() || messageId.length() > 120) {
-        throw badRequest("Message id is required.");
+        throw badRequest("缺少消息标识。");
       }
       if (!ROLES.contains(stringValue(message.get("role")))) {
-        throw badRequest("Unsupported message role.");
+        throw badRequest("不支持该消息角色。");
       }
       var parts = listOfMaps(message.get("parts"));
       if (parts.isEmpty()) {
-        throw badRequest("Message parts must not be empty.");
+        throw badRequest("消息内容不能为空。");
       }
       for (var part : parts) {
         var type = stringValue(part.get("type"));
         if ("text".equals(type) && stringValue(part.get("id")).isBlank()) {
-          throw badRequest("Message part id is required.");
+          throw badRequest("缺少消息内容标识。");
         }
         var text = stringValue(firstNonBlank(part.get("text"), part.get("title")));
         if (text.length() > MAX_CONTENT_LENGTH) {
-          throw badRequest("One message part is too large.");
+          throw badRequest("单段消息内容超过大小限制。");
         }
         chars += text.length();
         if ("file".equals(type) || part.containsKey("data") || part.containsKey("url")) {
@@ -2621,20 +2621,20 @@ public class HaloAiConsoleEndpoint implements CustomEndpoint {
             images++;
           }
           if (stringValue(part.get("url")).length() > 2048) {
-            throw badRequest("Attachment URL exceeds the maximum length.");
+          throw badRequest("附件访问地址超过最大长度限制。");
           }
           if (stringValue(part.get("data")).length() > MAX_DATA_URL_LENGTH) {
-            throw badRequest("Attachment payload exceeds the maximum length.");
+          throw badRequest("附件数据超过最大长度限制。");
           }
           validateDataUrlSize(stringValue(part.get("data")), maxImageBytes);
         }
       }
     }
     if (chars > maxChars) {
-      throw badRequest("AI context is too large.");
+      throw badRequest("发送给 AI 的上下文总量超过限制。");
     }
     if (images > maxImages || attachments > MAX_REQUEST_ATTACHMENTS) {
-      throw badRequest("Too many images or attachments in AI context.");
+      throw badRequest("发送给 AI 的图片或附件数量超过限制。");
     }
   }
 
@@ -2643,18 +2643,18 @@ public class HaloAiConsoleEndpoint implements CustomEndpoint {
     var maxImageBytes = maxImageBytes(globalSettings);
     var prompt = stringValue(payload.get("prompt"));
     if (prompt.length() > 12_000) {
-      throw badRequest("Image prompt is too large.");
+      throw badRequest("图像生成提示词超过长度限制。");
     }
     var inputImages = listOfMaps(payload.containsKey("images") ? payload.get("images") : payload.get("inputImages"));
     if (inputImages.size() > maxImages) {
-      throw badRequest("Too many input images.");
+      throw badRequest("输入图片数量超过限制。");
     }
     for (var image : inputImages) {
       if (stringValue(image.get("url")).length() > 2048) {
-        throw badRequest("Input image URL exceeds the maximum length.");
+        throw badRequest("输入图片的访问地址超过最大长度限制。");
       }
       if (stringValue(image.get("data")).length() > MAX_DATA_URL_LENGTH) {
-        throw badRequest("Input image payload exceeds the maximum length.");
+        throw badRequest("输入图片数据超过最大长度限制。");
       }
       validateDataUrlSize(stringValue(image.get("data")), maxImageBytes);
     }
@@ -2698,12 +2698,12 @@ public class HaloAiConsoleEndpoint implements CustomEndpoint {
   private void enforceSessionSize(Map<String, Object> session) {
     var messages = listOfMaps(session.get("messages"));
     if (messages.size() > MAX_MESSAGES_PER_SESSION) {
-      throw badRequest("Too many messages in one session.");
+      throw badRequest("单个会话中的消息数量超过限制。");
     }
     session.put("memory", limitString(stringValue(session.get("memory")), MAX_MEMORY_LENGTH));
     var serialized = writeMapValue(session);
     if (serialized.length() > MAX_SESSION_JSON_LENGTH) {
-      throw badRequest("Session is too large to save safely.");
+      throw badRequest("会话数据过大，无法安全保存。");
     }
   }
 
@@ -2741,7 +2741,7 @@ public class HaloAiConsoleEndpoint implements CustomEndpoint {
     try {
       return objectMapper.writeValueAsString(value);
     } catch (Exception e) {
-      throw badRequest("Unable to serialize value.");
+      throw badRequest("数据序列化失败，无法保存。");
     }
   }
 
@@ -2749,7 +2749,7 @@ public class HaloAiConsoleEndpoint implements CustomEndpoint {
     try {
       return objectMapper.writeValueAsString(value);
     } catch (Exception e) {
-      throw badRequest("Unable to serialize session snapshot.");
+      throw badRequest("会话快照序列化失败，无法保存。");
     }
   }
 
@@ -2827,7 +2827,7 @@ public class HaloAiConsoleEndpoint implements CustomEndpoint {
       return List.of();
     }
     if (files.size() > MAX_ATTACHMENTS_PER_MESSAGE) {
-      throw badRequest("Too many attachments in one message.");
+      throw badRequest("单条消息中的附件数量超过限制。");
     }
     files.forEach(file -> {
       file.setName(limitString(file.getName(), 240));
@@ -2835,7 +2835,7 @@ public class HaloAiConsoleEndpoint implements CustomEndpoint {
       file.setUrl(limitString(file.getUrl(), 2048));
       file.setAttachmentName(limitString(file.getAttachmentName(), 120));
       if (file.getSize() != null && (file.getSize() > maxImageBytes || file.getSize() > HARD_MAX_IMAGE_BYTES)) {
-        throw badRequest("Image file exceeds the configured size limit.");
+        throw badRequest("图片大小超过管理员配置的上限。");
       }
       validateDataUrlSize(file.getData(), maxImageBytes);
       file.setData(limitString(file.getData(), MAX_DATA_URL_LENGTH));
@@ -2848,7 +2848,7 @@ public class HaloAiConsoleEndpoint implements CustomEndpoint {
       return List.of();
     }
     if (images.size() > MAX_IMAGES_PER_MESSAGE) {
-      throw badRequest("Too many images in one message.");
+      throw badRequest("单条消息中的图片数量超过限制。");
     }
     return images.stream()
       .map(image -> {
@@ -2866,14 +2866,14 @@ public class HaloAiConsoleEndpoint implements CustomEndpoint {
     var payloadLength = comma >= 0 ? value.length() - comma - 1 : value.length();
     var estimatedBytes = value.contains(";base64,") ? (payloadLength * 3L / 4L) : payloadLength;
     if (estimatedBytes > maxImageBytes || estimatedBytes > HARD_MAX_IMAGE_BYTES) {
-      throw badRequest("Image payload exceeds the configured size limit.");
+      throw badRequest("图片数据超过管理员配置的大小上限。");
     }
   }
 
   private String validateMediaType(String mediaType) {
     var value = limitString(mediaType, 120);
     if (!value.isBlank() && !value.startsWith("image/") && !"application/octet-stream".equals(value)) {
-      throw badRequest("Unsupported media type.");
+      throw badRequest("不支持该媒体类型。");
     }
     return value;
   }
