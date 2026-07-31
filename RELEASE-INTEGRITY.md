@@ -28,14 +28,15 @@
 - `0.3.0` 及更早版本属于历史制品，其元数据和许可证反映当时的打包状态。
 - `0.3.1` 是当前不可变发布基线，首次完整采用 GNU AGPL v3、独立隐私文档和明确的 AI Foundation 最低版本。
 - `0.3.2` 在不改变 API、存储格式或权限语义的前提下统一中文操作文案。
+- `0.3.3` 补充应用市场要求的主页和问题反馈元数据，并默认不自动启用插件。
 
 ## Current release
 
 ```text
-Halo AI Console: 0.3.2
+Halo AI Console: 0.3.3
 Halo: >=2.25.0
 AI Foundation: >=1.0.0-beta.5
 License: GNU AGPL v3
-Artifact: halo-ai-console-0.3.2.jar
-Checksum: halo-ai-console-0.3.2.jar.sha256
+Artifact: halo-ai-console-0.3.3.jar
+Checksum: halo-ai-console-0.3.3.jar.sha256
 ```

@@ -70,9 +70,9 @@ The plugin installs these role templates:
 
 ## Build Artifact
 
-Current plugin version: `0.3.2`.
+Current plugin version: `0.3.3`.
 
-Local packaged jar: `dist/halo-ai-console-0.3.2.jar`.
+Local packaged jar: `dist/halo-ai-console-0.3.3.jar`.
 
 Historical packaged jars are committed under the repository `dist/` directory for quick download and regression comparison.
 

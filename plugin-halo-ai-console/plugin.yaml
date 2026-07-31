@@ -5,7 +5,7 @@ metadata:
   annotations:
     store.halo.run/recommended-apps: "[\"app-acslk9nu\"]"
 spec:
-  enabled: true
+  enabled: false
   requires: ">=2.25.0"
   pluginDependencies:
     ai-foundation: ">=1.0.0-beta.5"
@@ -15,9 +15,11 @@ spec:
   logo: "icon.svg"
   settingName: "halo-ai-console-settings"
   configMapName: "halo-ai-console-config"
+  homepage: "https://github.com/joshuaJJM/halo-ai-console"
+  issues: "https://github.com/joshuaJJM/halo-ai-console/issues"
   displayName: "Halo AI Console"
   description: "为 Halo Console 提供 AI 对话、图像生成、审计和模型管理能力。"
   license:
     - name: "GNU AGPL v3"
       url: "https://www.gnu.org/licenses/agpl-3.0.html"
-  version: "0.3.2"
+  version: "0.3.3"

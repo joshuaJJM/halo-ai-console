@@ -1501,7 +1501,7 @@ Do not claim a release was published unless it was actually published.
 Current plugin baseline:
 
 ```text
-Halo AI Console: 0.3.2
+Halo AI Console: 0.3.3
 Halo: >=2.25.0
 AI Foundation: >=1.0.0-beta.5
 License: GNU AGPL v3
