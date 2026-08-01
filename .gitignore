@@ -5,6 +5,8 @@
 /start-halo.bat
 /halo-*.jar
 /*-backup-*.zip
+/BUGS.md
+/DEVELOPMENT-NOTES.md
 
 # Temporary duplicate folders
 /dist - 副本/
