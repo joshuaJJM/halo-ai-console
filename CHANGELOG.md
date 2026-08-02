@@ -2,6 +2,28 @@
 
 本项目遵循 Semantic Versioning。历史制品一经发布即保持不变。
 
+## [0.3.5] - 2026-08-02
+
+### Changed
+
+- 将插件自有 Java 类从 `run.halo.aichatconsole` 迁移至 `io.github.joshuajj.haloaiconsole`，并同步更新端点导入与组件索引。
+
+### Compatibility
+
+- Requires Halo `>=2.25.0`.
+- Requires AI Foundation `>=1.0.0-beta.5`.
+- 插件 ID、HTTP API、权限、Halo Extension GVK 与 ConfigMap 存储格式保持不变；已有会话、消息、调用日志和图片缓存无需迁移。
+- 从 `0.3.4` 热升级时，请在 Halo 插件页执行一次“重载插件”，或重启 Halo，以刷新包名迁移后的后端路由。
+- 受 Halo 2.25.x 的 java-semver 解析限制，`plugin.yaml` 保持必装依赖 `ai-foundation: "*"`；插件启动校验器仍会严格拒绝缺失、无效或低于 `1.0.0-beta.5` 的 AI Foundation。
+
+### Security
+
+- 降低项目自有类与 Halo 官方或其他插件类发生命名空间冲突及维护方身份误解的风险。
+
+### Privacy
+
+- 未新增数据收集、第三方传输、遥测或外部资源。
+
 ## [0.3.4] - 2026-07-31
 
 ### Changed

@@ -1,4 +1,4 @@
-package run.halo.aichatconsole.extension;
+package io.github.joshuajj.haloaiconsole.extension;
 
 import run.halo.app.extension.AbstractExtension;
 import run.halo.app.extension.GVK;

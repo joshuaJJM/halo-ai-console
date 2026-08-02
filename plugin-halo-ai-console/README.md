@@ -70,15 +70,17 @@ The plugin installs these role templates:
 
 ## Build Artifact
 
-Current plugin version: `0.3.4`.
+Current plugin version: `0.3.5`.
 
-Local packaged jar: `dist/halo-ai-console-0.3.4.jar`.
+Local packaged jar: `dist/halo-ai-console-0.3.5.jar`.
 
 Historical packaged jars are committed under the repository `dist/` directory for quick download and regression comparison.
 
 ## 中文说明
 
 Halo AI Console 是社区维护的 Halo Console 插件，不是 Halo 官方插件。它通过 AI Foundation 发现模型并执行聊天、图像生成和多模态任务。用户选择“默认”时，使用的是 AI Foundation 中对应能力的默认模型：普通聊天使用语言模型，带图片输入时使用多模态模型，`/image` 或图像模式使用图像生成模型。
+
+从 `0.3.4` 热升级到 `0.3.5` 后，请在 Halo 插件页执行一次“重载插件”，或重启 Halo，以刷新内部 Java 包名迁移后的后端路由。插件 ID、HTTP API、权限、资源 GVK 和 ConfigMap 存储格式均保持不变，无需数据迁移。
 
 插件本身免费。使用模型可能产生由 AI Foundation 中配置的第三方服务商收取的 API 费用，费用由 Halo 站点管理员承担。停用相关模型、删除 API 配置或禁用插件即可停止新的调用。
 

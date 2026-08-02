@@ -30,14 +30,15 @@
 - `0.3.2` 在不改变 API、存储格式或权限语义的前提下统一中文操作文案。
 - `0.3.3` 补充应用市场要求的主页和问题反馈元数据，并默认不自动启用插件。
 - `0.3.4` 规避 Halo 对预发布依赖范围的解析缺陷，并在插件启动阶段强制校验 AI Foundation 最低版本；同时恢复界面中的 `Token` 和 `Job` 通用术语。
+- `0.3.5` 将项目自有 Java 类迁移至社区命名空间；插件 ID、HTTP API、权限、资源 GVK 和 ConfigMap 存储格式保持不变。升级后需要重载插件或重启 Halo 以刷新后端路由。
 
 ## Current release
 
 ```text
-Halo AI Console: 0.3.4
+Halo AI Console: 0.3.5
 Halo: >=2.25.0
 AI Foundation: >=1.0.0-beta.5
 License: GNU AGPL v3
-Artifact: halo-ai-console-0.3.4.jar
-Checksum: halo-ai-console-0.3.4.jar.sha256
+Artifact: halo-ai-console-0.3.5.jar
+Checksum: halo-ai-console-0.3.5.jar.sha256
 ```

@@ -1,4 +1,4 @@
-package run.halo.aichatconsole.extension;
+package io.github.joshuajj.haloaiconsole.extension;
 
 import java.time.Instant;
 import java.util.ArrayList;

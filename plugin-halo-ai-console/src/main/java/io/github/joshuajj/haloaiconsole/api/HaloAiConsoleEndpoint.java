@@ -1,4 +1,4 @@
-package run.halo.aichatconsole.api;
+package io.github.joshuajj.haloaiconsole.api;
 
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -47,11 +47,11 @@ import reactor.core.publisher.Sinks;
 import reactor.util.retry.Retry;
 import reactor.core.Disposable;
 import org.springframework.security.core.Authentication;
-import run.halo.aichatconsole.service.AiFoundationModelInvoker;
-import run.halo.aichatconsole.extension.AiChatCallLog;
-import run.halo.aichatconsole.extension.AiChatImageCache;
-import run.halo.aichatconsole.extension.AiChatMessage;
-import run.halo.aichatconsole.extension.AiChatSession;
+import io.github.joshuajj.haloaiconsole.service.AiFoundationModelInvoker;
+import io.github.joshuajj.haloaiconsole.extension.AiChatCallLog;
+import io.github.joshuajj.haloaiconsole.extension.AiChatImageCache;
+import io.github.joshuajj.haloaiconsole.extension.AiChatMessage;
+import io.github.joshuajj.haloaiconsole.extension.AiChatSession;
 import run.halo.app.core.extension.endpoint.CustomEndpoint;
 import run.halo.app.extension.ConfigMap;
 import run.halo.app.extension.GroupVersion;

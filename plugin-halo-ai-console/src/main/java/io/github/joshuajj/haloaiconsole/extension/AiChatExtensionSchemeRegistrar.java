@@ -1,4 +1,4 @@
-package run.halo.aichatconsole.extension;
+package io.github.joshuajj.haloaiconsole.extension;
 
 import org.springframework.stereotype.Component;
 import run.halo.app.extension.Extension;

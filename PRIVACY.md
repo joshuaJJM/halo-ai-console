@@ -1,8 +1,8 @@
 # Halo AI Console 隐私与数据处理说明
 
-最后更新：2026-07-31
+最后更新：2026-08-02
 
-Halo AI Console 是社区维护的 Halo Console 插件，不是 Halo 官方产品。本说明描述插件 `0.3.4` 的实际数据处理方式。Halo 站点管理员负责决定是否启用插件、配置哪些 AI Foundation 模型、授予哪些权限以及设置保存期限。
+Halo AI Console 是社区维护的 Halo Console 插件，不是 Halo 官方产品。本说明描述插件 `0.3.5` 的实际数据处理方式。Halo 站点管理员负责决定是否启用插件、配置哪些 AI Foundation 模型、授予哪些权限以及设置保存期限。
 
 ## 处理哪些数据
 

@@ -1,4 +1,4 @@
-package run.halo.aichatconsole.service;
+package io.github.joshuajj.haloaiconsole.service;
 
 import java.util.ArrayList;
 import java.util.LinkedHashMap;

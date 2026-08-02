@@ -1,4 +1,4 @@
-package run.halo.aichatconsole.service;
+package io.github.joshuajj.haloaiconsole.service;
 
 import com.github.zafarkhaja.semver.Version;
 import java.time.Duration;
