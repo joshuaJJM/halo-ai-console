@@ -8,7 +8,7 @@ This project is not an official Halo project and does not use the official Halo 
 
 ## Features
 
-- Requires AI Foundation `>= 1.0.0-beta.5`. Because Halo 2.25.x cannot parse this pre-release range in plugin dependency metadata, the descriptor keeps AI Foundation as a required dependency with `*`, and a startup compatibility verifier enforces the actual minimum version before the plugin can start.
+- Requires AI Foundation `>= 1.0.1`. The plugin descriptor declares this dependency directly, and a startup compatibility verifier independently enforces the same minimum before the plugin can start.
 - Adds a `Halo AI` console route and a settings / call-log route.
 - Uses the AI Foundation Java SDK for chat, multimodal input, summaries, and image generation. The Console API is used only to discover enabled model options.
 - `Default` model selection means the default model of the requested capability: language / multimodal for chat, image generation for `/image` or image mode.
@@ -23,6 +23,12 @@ This project is not an official Halo project and does not use the official Halo 
 - Legacy extension objects are copied but not deleted when Halo reports missing indices for the old extension types. The migration still returns success with `legacyDeleteSkipped` and `deleteWarnings` so the new store is usable without risking data loss.
 - Renders Markdown, code blocks, lightweight Mermaid flowcharts, and common LaTeX fragments with local bundled assets. Rendered HTML is sanitized before insertion with bundled official DOMPurify `3.4.12` and falls back to a strict allow-list sanitizer before the script finishes loading; no external MathJax, highlight.js, or DOMPurify CDN is used.
 - Backend jobs enforce the plugin global settings for model allow-list, context limits, generated image size, image-cache retention, and combined reasoning/output length. The persistent per-user/per-day ConfigMap is the cross-instance source of truth for concurrent reservations, request timestamps, and daily token usage; the JVM `usageStates` map is only a local cache/fast-path and is never the sole quota authority. Limit violations return `429 Too Many Requests` where applicable.
+
+## Source build and review
+
+The repository root contains the Gradle Wrapper, dependency lock, frontend package lock, Java/frontend tests, and CI workflow. With Java 21 and Node.js 22, run `./gradlew clean build` from the repository root. The browser entry is assembled from the owner-cache and asynchronous session-target modules before it is packaged as `ui/main.js`.
+
+Policy logic for model request envelopes, quotas, Job lifecycle, and persisted-owner checks is separated from the HTTP endpoint and covered by unit tests. Automated checks do not replace human review; release reviewers should complete the repository `REVIEW-CHECKLIST.md`, especially its ordinary-user, cross-user, and plugin-lifecycle scenarios.
 
 ## Permissions
 
@@ -70,9 +76,9 @@ The plugin installs these role templates:
 
 ## Build Artifact
 
-Current plugin version: `0.3.5`.
+Current plugin version: `0.4.1-alpha.14`.
 
-Local packaged jar: `dist/halo-ai-console-0.3.5.jar`.
+Next packaged jar: `halo-ai-console-0.4.1-alpha.14.jar`.
 
 Historical packaged jars are committed under the repository `dist/` directory for quick download and regression comparison.
 
@@ -80,7 +86,7 @@ Historical packaged jars are committed under the repository `dist/` directory fo
 
 Halo AI Console 是社区维护的 Halo Console 插件，不是 Halo 官方插件。它通过 AI Foundation 发现模型并执行聊天、图像生成和多模态任务。用户选择“默认”时，使用的是 AI Foundation 中对应能力的默认模型：普通聊天使用语言模型，带图片输入时使用多模态模型，`/image` 或图像模式使用图像生成模型。
 
-从 `0.3.4` 热升级到 `0.3.5` 后，请在 Halo 插件页执行一次“重载插件”，或重启 Halo，以刷新内部 Java 包名迁移后的后端路由。插件 ID、HTTP API、权限、资源 GVK 和 ConfigMap 存储格式均保持不变，无需数据迁移。
+从 `0.3.5` 升级到 `0.4.1-alpha.14` 后，请在 Halo 插件页执行一次“重载插件”，或重启 Halo，以刷新后端组件和前端资源。会话快照 API 现在要求客户端提交服务端版本；旧标签页和外部客户端必须刷新并携带 `_baseVersion`。插件 ID、权限、资源 GVK 和 ConfigMap 存储格式均保持不变，无需数据迁移。该 alpha 版本仅用于测试，不能替换已发布制品。
 
 插件本身免费。使用模型可能产生由 AI Foundation 中配置的第三方服务商收取的 API 费用，费用由 Halo 站点管理员承担。停用相关模型、删除 API 配置或禁用插件即可停止新的调用。
 
@@ -109,7 +115,7 @@ Report issues at [GitHub Issues](https://github.com/joshuaJJM/halo-ai-console/is
 ## Requirements
 
 - Halo `>= 2.25.0`
-- AI Foundation `>= 1.0.0-beta.5` installed and enabled; the startup verifier enforces this minimum even though the descriptor uses the required `*` workaround for Halo 2.25.x
+- AI Foundation `>= 1.0.1` installed and enabled; the startup verifier enforces this minimum in addition to the descriptor requirement
 - At least one enabled language / multimodal model for chat
 - At least one enabled image generation model for image mode
 - Halo attachment storage configured for image upload

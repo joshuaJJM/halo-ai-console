@@ -22,6 +22,9 @@ public class AiChatMessage extends AbstractExtension {
     private String sessionId;
     private String owner;
     private String role;
+    private String generationType;
+    private String generationModel;
+    private Boolean favorite;
     private String content;
     private String reasoning;
     private Boolean reasoningOpen;
@@ -63,6 +66,30 @@ public class AiChatMessage extends AbstractExtension {
 
     public void setRole(String role) {
       this.role = role;
+    }
+
+    public String getGenerationType() {
+      return generationType;
+    }
+
+    public void setGenerationType(String generationType) {
+      this.generationType = generationType;
+    }
+
+    public String getGenerationModel() {
+      return generationModel;
+    }
+
+    public void setGenerationModel(String generationModel) {
+      this.generationModel = generationModel;
+    }
+
+    public Boolean getFavorite() {
+      return favorite;
+    }
+
+    public void setFavorite(Boolean favorite) {
+      this.favorite = favorite;
     }
 
     public String getContent() {

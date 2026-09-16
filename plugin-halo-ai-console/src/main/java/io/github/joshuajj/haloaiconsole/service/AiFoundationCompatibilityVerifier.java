@@ -9,7 +9,7 @@ import run.halo.app.extension.ReactiveExtensionClient;
 
 @Component
 public class AiFoundationCompatibilityVerifier implements InitializingBean {
-  static final String MINIMUM_VERSION = "1.0.0-beta.5";
+  static final String MINIMUM_VERSION = "1.0.1";
 
   private final ReactiveExtensionClient client;
 

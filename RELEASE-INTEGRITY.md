@@ -32,13 +32,26 @@
 - `0.3.4` 规避 Halo 对预发布依赖范围的解析缺陷，并在插件启动阶段强制校验 AI Foundation 最低版本；同时恢复界面中的 `Token` 和 `Job` 通用术语。
 - `0.3.5` 将项目自有 Java 类迁移至社区命名空间；插件 ID、HTTP API、权限、资源 GVK 和 ConfigMap 存储格式保持不变。升级后需要重载插件或重启 Halo 以刷新后端路由。
 
-## Current release
+## Current published release
 
 ```text
 Halo AI Console: 0.3.5
 Halo: >=2.25.0
-AI Foundation: >=1.0.0-beta.5
+AI Foundation: >=1.0.1
 License: GNU AGPL v3
 Artifact: halo-ai-console-0.3.5.jar
 Checksum: halo-ai-console-0.3.5.jar.sha256
 ```
+
+## Next development release
+
+```text
+Halo AI Console: 0.4.1-alpha.14
+Halo: >=2.25.0
+AI Foundation: >=1.0.1
+License: GNU AGPL v3
+Artifact: halo-ai-console-0.4.1-alpha.14.jar
+Checksum: halo-ai-console-0.4.1-alpha.14.jar.sha256
+```
+
+`0.4.1-alpha.14` is the next unpublished test build. It supersedes the development source state of `0.4.1-alpha.13` without replacing any already-built test artifact or any published artifact, including `0.3.5`. Before any publication it requires maintainer review, a new immutable JAR, a matching SHA-256 file, and a new `v0.4.1-alpha.14` tag. The published `0.3.5` artifact, checksum, and tag remain unchanged.

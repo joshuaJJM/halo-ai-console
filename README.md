@@ -22,27 +22,39 @@ Halo AI Console 是一个由社区维护的 Halo Console 插件，基于 AI Foun
 
 The plugin source lives in [`plugin-halo-ai-console`](plugin-halo-ai-console/).
 
-Current plugin version: `0.3.5`.
+Current plugin version: `0.4.1-alpha.14`.
 
 ## Requirements
 
 - Halo `>= 2.25.0`
-- AI Foundation `>= 1.0.0-beta.5` installed and enabled
+- AI Foundation `>= 1.0.1` installed and enabled
 - At least one enabled language or multimodal model for chat
 - At least one enabled image generation model for image mode
 - Halo attachment storage configured for image upload
 
-Halo 2.25.x cannot parse the AI Foundation pre-release minimum in plugin dependency metadata. The descriptor therefore keeps AI Foundation as a required dependency using `*`, while the plugin startup verifier directly enforces the documented minimum `1.0.0-beta.5` and fails closed on missing, invalid, or older versions.
+The plugin descriptor declares AI Foundation as the required dependency `>=1.0.1`. Startup also verifies the installed version and fails closed when the dependency is missing, invalid, or older than the documented minimum.
 
 ## Packaging
 
-Packaged artifacts are committed under:
+The next release artifact will be:
 
 ```text
-dist/halo-ai-console-0.3.5.jar
+halo-ai-console-0.4.1-alpha.14.jar
 ```
 
-The `dist/` directory keeps historical packaged jars for quick download and regression comparison.
+The `dist/` directory keeps only immutable historical packaged jars for quick download and regression comparison. It does not contain unreleased development builds.
+
+## Development and verification
+
+The repository includes a Gradle Wrapper, a locked frontend build harness, Java and frontend tests, and GitHub Actions CI. A clean checkout requires Java 21 and Node.js 22, then can be verified with:
+
+```bash
+./gradlew clean build
+```
+
+The build compiles the plugin against the Halo 2.25.0 API platform and AI Foundation 1.0.1 API, runs Java policy and permission-contract tests, runs the frontend cache/session-isolation tests, builds `ui/main.js`, and packages a JAR under `build/libs/`. Runtime compatibility remains Halo `>=2.25.0`, including the tested Halo 2.25.4 maintenance release.
+
+AI-assisted changes still require human review. Maintainers should complete [`REVIEW-CHECKLIST.md`](REVIEW-CHECKLIST.md), including non-super-role and lifecycle smoke tests, before release or App Store submission.
 
 For implementation details, permissions, storage behavior, third-party resources, and API notes, see [`plugin-halo-ai-console/README.md`](plugin-halo-ai-console/README.md) and [`PRIVACY.md`](PRIVACY.md).
 
@@ -60,7 +72,7 @@ For implementation details, permissions, storage behavior, third-party resources
 ### 安装和配置
 
 1. 安装并启用 AI Foundation，配置至少一个语言/多模态模型和一个图像生成模型。
-2. 安装 `dist/halo-ai-console-0.3.5.jar`。从 `0.3.4` 热升级后，请在 Halo 插件页执行一次“重载插件”；也可以重启 Halo，以刷新因内部 Java 包名迁移而更新的后端路由。
+2. 安装测试包 `halo-ai-console-0.4.1-alpha.14.jar`。从 `0.3.5` 热升级后，请在 Halo 插件页执行一次"重载插件"；也可以重启 Halo，以刷新后端组件和前端资源。旧页面必须刷新后才能保存会话。该 alpha 版本仅用于测试，不应覆盖任何已发布制品。
 3. 在 Halo 插件设置中配置默认模型、允许使用的模型、并发与配额、图片大小和 Job/日志保留策略。
 4. 为用户授予 Halo AI 角色；需要查看全部审计记录或迁移旧数据时，再授予对应的管理员权限。
 

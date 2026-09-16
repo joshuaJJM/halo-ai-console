@@ -15,21 +15,16 @@ rules:
     verbs: ["get", "list"]
   - apiGroups: ["console.api.halo-ai-console.halo.run"]
     resources:
-      ["sessions-with-messages", "sessions", "call-logs", "settings",
-       "assets/dompurify.min.js", "image-caches", "attachments/upload", "jobs", "jobs/*", "jobs/chat", "jobs/image", "jobs/cancel",
-       "models", "models/*"]
+      ["sessions-with-messages", "sessions", "sessions/snapshot", "call-logs", "audit-logs", "settings",
+       "assets", "image-caches", "jobs", "jobs/events", "jobs/cancel", "me",
+       "models/generate-text"]
     verbs: ["get", "list", "create", "update", "delete"]
-  - apiGroups: ["console.api.halo-ai-console.halo.run"]
-    resources: ["me/export"]
-    verbs: ["get"]
-  - apiGroups: ["console.api.halo-ai-console.halo.run"]
-    resources: ["me/data"]
-    verbs: ["delete"]
-  - apiGroups: ["console.api.halo-ai-console.halo.run"]
-    resources: ["global-settings"]
-    verbs: ["get", "list"]
-  - apiGroups: ["console.api.storage.halo.run"]
-    resources: ["attachments"]
+  # Halo treats collection POSTs with a name but no subresource as non-resource URLs.
+  - nonResourceURLs:
+      - "/apis/console.api.halo-ai-console.halo.run/v1alpha1/attachments/upload"
+      - "/apis/console.api.halo-ai-console.halo.run/v1alpha1/jobs/chat"
+      - "/apis/console.api.halo-ai-console.halo.run/v1alpha1/jobs/image"
+      - "/apis/console.api.halo-ai-console.halo.run/v1alpha1/models/*/generate-text"
     verbs: ["create"]
 ---
 apiVersion: v1alpha1
@@ -66,5 +61,8 @@ metadata:
 rules:
   - apiGroups: ["console.api.halo-ai-console.halo.run"]
     resources:
-      ["call-logs/all", "audit-logs/all", "migration/legacy", "migration/legacy/status", "global-settings"]
+      ["call-logs", "audit-logs", "migration/status", "global-settings"]
     verbs: ["get", "list", "create", "update", "delete"]
+  - nonResourceURLs:
+      - "/apis/console.api.halo-ai-console.halo.run/v1alpha1/migration/legacy"
+    verbs: ["create"]

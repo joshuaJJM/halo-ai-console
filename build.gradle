@@ -1,0 +1,141 @@
+plugins {
+    id 'java'
+}
+
+group = 'io.github.joshuajj'
+version = '0.4.1-alpha.14'
+
+repositories {
+    mavenCentral()
+}
+
+dependencyLocking {
+    lockAllConfigurations()
+}
+
+dependencies {
+    implementation platform('run.halo.tools.platform:plugin:2.25.0')
+    compileOnly 'run.halo.app:api'
+    compileOnly 'run.halo.aifoundation:api:1.0.1'
+
+    testImplementation platform('org.junit:junit-bom:5.11.4')
+    testImplementation 'org.junit.jupiter:junit-jupiter'
+    testImplementation 'org.assertj:assertj-core:3.27.3'
+    testImplementation 'org.yaml:snakeyaml:2.4'
+    testImplementation 'io.projectreactor:reactor-core'
+    testImplementation 'org.springframework:spring-beans'
+    testImplementation 'com.github.zafarkhaja:java-semver:0.10.2'
+    testRuntimeOnly 'org.junit.platform:junit-platform-launcher'
+}
+
+java {
+    toolchain {
+        languageVersion = JavaLanguageVersion.of(21)
+    }
+}
+
+sourceSets {
+    main {
+        java.srcDirs = ['plugin-halo-ai-console/src/main/java']
+        resources.srcDirs = []
+    }
+    test {
+        java.srcDirs = ['src/test/java']
+        resources.srcDirs = ['src/test/resources']
+    }
+}
+
+def isWindows = System.getProperty('os.name').toLowerCase(Locale.ROOT).contains('windows')
+def npmExecutable = isWindows ? 'npm.cmd' : 'npm'
+def frontendDir = layout.projectDirectory.dir('plugin-halo-ai-console/ui')
+def frontendOutput = layout.buildDirectory.file('generated/frontend/main.js')
+def frontendInstallStamp = layout.buildDirectory.file('frontend/npm-ci.stamp').get().asFile
+
+tasks.register('frontendInstall', Exec) {
+    group = 'build'
+    description = 'Installs the locked frontend build dependencies.'
+    workingDir frontendDir
+    commandLine npmExecutable, 'ci', '--ignore-scripts'
+    inputs.files(frontendDir.file('package.json'), frontendDir.file('package-lock.json'))
+    outputs.file(frontendInstallStamp)
+    doLast {
+        frontendInstallStamp.parentFile.mkdirs()
+        frontendInstallStamp.text = 'ok\n'
+    }
+}
+
+tasks.register('frontendCheck', Exec) {
+    group = 'verification'
+    description = 'Checks the frontend JavaScript syntax.'
+    dependsOn tasks.named('frontendInstall')
+    workingDir frontendDir
+    commandLine npmExecutable, 'run', 'check'
+}
+
+tasks.register('frontendTest', Exec) {
+    group = 'verification'
+    description = 'Runs the frontend state module tests.'
+    dependsOn tasks.named('frontendCheck')
+    workingDir frontendDir
+    commandLine npmExecutable, 'test'
+}
+
+tasks.register('frontendBuild', Exec) {
+    group = 'build'
+    description = 'Builds the browser entry from the tested frontend modules.'
+    dependsOn tasks.named('frontendTest')
+    workingDir frontendDir
+    commandLine npmExecutable, 'run', 'build', '--', frontendOutput.get().asFile.absolutePath
+    inputs.files(
+        frontendDir.file('main.js'),
+        frontendDir.file('build.mjs'),
+        fileTree(frontendDir.dir('src'))
+    )
+    outputs.file(frontendOutput)
+}
+
+tasks.named('processResources') {
+    dependsOn tasks.named('frontendBuild')
+    duplicatesStrategy = DuplicatesStrategy.EXCLUDE
+
+    from('plugin-halo-ai-console') {
+        include 'plugin.yaml'
+        include 'icon.svg'
+        include 'assets/**'
+        include 'extensions/**'
+        include 'META-INF/**'
+    }
+    from(frontendOutput) {
+        into 'ui'
+        rename { 'main.js' }
+    }
+    from('plugin-halo-ai-console/JAR-README.md') {
+        rename { 'README.md' }
+    }
+    from('LICENSE')
+    from('PRIVACY.md')
+    from('THIRD-PARTY-NOTICES.md')
+    from('licenses') {
+        into 'licenses'
+    }
+}
+
+tasks.named('test') {
+    useJUnitPlatform()
+}
+
+tasks.named('check') {
+    dependsOn tasks.named('frontendTest')
+}
+
+tasks.named('jar') {
+    archiveBaseName = 'halo-ai-console'
+    manifest {
+        attributes('Implementation-Title': 'Halo AI Console', 'Implementation-Version': project.version)
+    }
+}
+
+tasks.withType(AbstractArchiveTask).configureEach {
+    preserveFileTimestamps = false
+    reproducibleFileOrder = true
+}

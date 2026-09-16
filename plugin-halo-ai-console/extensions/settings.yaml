@@ -62,7 +62,7 @@ spec:
           label: 单张图片大小上限（MB）
           value: 8
           min: 1
-          max: 50
+          max: 10
         - $formkit: number
           name: maxConcurrentJobs
           label: 最大并发任务数

@@ -15,6 +15,9 @@
 # Build scratch files
 *.class
 *.log
+/.gradle/
+/build/
+**/node_modules/
 
 # OS/editor files
 .DS_Store

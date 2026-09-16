@@ -1,0 +1,14 @@
+{
+  "name": "halo-ai-console-ui",
+  "version": "0.0.0-private",
+  "private": true,
+  "description": "Frontend build and test harness for Halo AI Console",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "build": "node build.mjs",
+    "check": "node --check main.js && node --check src/job-status.cjs && node --check src/session-target.cjs && node --check src/session-version.cjs && node --check src/owner-cache.cjs",
+    "test": "node --test test/*.test.cjs"
+  }
+}

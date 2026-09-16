@@ -2,11 +2,16 @@ package io.github.joshuajj.haloaiconsole.api;
 
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import java.io.IOException;
 import java.time.Duration;
+import java.nio.charset.StandardCharsets;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.time.ZoneId;
+import java.io.IOException;
+import java.io.InputStream;
+import java.net.HttpURLConnection;
+import java.net.URI;
+import java.net.URL;
 import java.security.Principal;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
@@ -18,23 +23,21 @@ import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.Semaphore;
 import java.util.function.Consumer;
 import java.util.stream.Collectors;
 import org.springframework.core.ParameterizedTypeReference;
-import org.springframework.core.io.ByteArrayResource;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.data.domain.Sort;
 import org.springframework.stereotype.Component;
 import org.springframework.http.codec.ServerSentEvent;
-import org.springframework.http.client.MultipartBodyBuilder;
-import org.springframework.web.reactive.function.BodyInserters;
-import org.springframework.web.reactive.function.client.WebClient;
 import org.springframework.web.server.ResponseStatusException;
 import org.springframework.http.codec.multipart.FilePart;
 import org.springframework.http.codec.multipart.Part;
 import org.springframework.core.io.buffer.DataBufferLimitException;
+import org.springframework.core.io.buffer.DataBuffer;
 import org.springframework.core.io.buffer.DataBufferUtils;
 import org.springframework.util.MultiValueMap;
 import org.springframework.web.reactive.function.server.RouterFunction;
@@ -43,16 +46,32 @@ import org.springframework.web.reactive.function.server.ServerRequest;
 import org.springframework.web.reactive.function.server.ServerResponse;
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
-import reactor.core.publisher.Sinks;
+import reactor.core.scheduler.Schedulers;
 import reactor.util.retry.Retry;
 import reactor.core.Disposable;
+import org.springframework.beans.factory.DisposableBean;
 import org.springframework.security.core.Authentication;
+import org.springframework.core.io.buffer.DefaultDataBufferFactory;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.concurrent.atomic.AtomicBoolean;
 import io.github.joshuajj.haloaiconsole.service.AiFoundationModelInvoker;
+import io.github.joshuajj.haloaiconsole.service.JobEventRegistry;
+import io.github.joshuajj.haloaiconsole.audit.AuditRecordFactory;
+import io.github.joshuajj.haloaiconsole.policy.ConversationRequestPolicy;
+import io.github.joshuajj.haloaiconsole.policy.JobLifecyclePolicy;
+import io.github.joshuajj.haloaiconsole.policy.QuotaPolicy;
+import io.github.joshuajj.haloaiconsole.security.OwnerAccessPolicy;
+import io.github.joshuajj.haloaiconsole.security.ImageUploadPolicy;
+import io.github.joshuajj.haloaiconsole.security.RemoteImageContentPolicy;
 import io.github.joshuajj.haloaiconsole.extension.AiChatCallLog;
 import io.github.joshuajj.haloaiconsole.extension.AiChatImageCache;
 import io.github.joshuajj.haloaiconsole.extension.AiChatMessage;
 import io.github.joshuajj.haloaiconsole.extension.AiChatSession;
 import run.halo.app.core.extension.endpoint.CustomEndpoint;
+import run.halo.app.core.extension.attachment.Attachment;
+import run.halo.app.core.extension.service.AttachmentService;
 import run.halo.app.extension.ConfigMap;
 import run.halo.app.extension.GroupVersion;
 import run.halo.app.extension.ListOptions;
@@ -60,7 +79,8 @@ import run.halo.app.extension.Metadata;
 import run.halo.app.extension.ReactiveExtensionClient;
 
 @Component
-public class HaloAiConsoleEndpoint implements CustomEndpoint {
+public class HaloAiConsoleEndpoint implements CustomEndpoint, DisposableBean {
+  private static final Logger log = LoggerFactory.getLogger(HaloAiConsoleEndpoint.class);
   private static final int MAX_TITLE_LENGTH = 120;
   private static final int MAX_MEMORY_LENGTH = 20000;
   private static final int MAX_CONTENT_LENGTH = 200000;
@@ -75,11 +95,29 @@ public class HaloAiConsoleEndpoint implements CustomEndpoint {
   private static final int MAX_ATTACHMENTS_PER_MESSAGE = 20;
   private static final int MAX_IMAGES_PER_MESSAGE = 20;
   private static final int MAX_TAGS_PER_SESSION = 20;
-  private static final int MAX_DATA_URL_LENGTH = 2_000_000;
+  // Kept below the JSON request envelope and ConfigMap payload budget.
+  private static final int MAX_DATA_URL_LENGTH = 700_000;
+  private static final int MAX_JSON_REQUEST_BYTES = 1_000_000;
   private static final int MAX_EXPORT_LOGS = 10_000;
   private static final int MAX_EXPORT_JOBS = 10_000;
-  private static final long HARD_MAX_IMAGE_BYTES = 50L * 1024L * 1024L;
+  private static final int MAX_IMAGE_RESULTS_PER_REQUEST = 4;
+  private static final int MAX_IMAGE_DIMENSION = 2_048;
+  private static final long MAX_IMAGE_PIXELS = 4_194_304L;
+  private static final long HARD_MAX_IMAGE_BYTES = 10L * 1024L * 1024L;
+  private static final Duration GENERATED_IMAGE_DOWNLOAD_TIMEOUT = Duration.ofSeconds(20);
+  private static final Semaphore IMAGE_UPLOAD_PERMITS = new Semaphore(2, true);
   private static final Set<String> ROLES = Set.of("user", "assistant");
+  private static final Set<String> AUXILIARY_OPERATIONS = Set.of(
+    "title-generation", "conversation-summary", "context-compression"
+  );
+  private static final Set<String> ADMIN_AUTHORITIES = Set.of(
+    "plugin:halo-ai-console:admin",
+    "plugin:halo-ai-console:call-log-all",
+    "role-template-halo-ai-console-admin",
+    "ROLE_role-template-halo-ai-console-admin",
+    "super-role",
+    "ROLE_super-role"
+  );
   private static final String STORE_CONFIG_MAP_PREFIX = "halo-ai-console-store-";
   private static final String SESSION_CONFIG_MAP_PREFIX = "halo-ai-console-session-";
   private static final String JOB_CONFIG_MAP_PREFIX = "halo-ai-console-job-";
@@ -88,6 +126,8 @@ public class HaloAiConsoleEndpoint implements CustomEndpoint {
   private static final String INSTANCE_CONFIG_MAP_PREFIX = "halo-ai-console-instance-";
   private static final long INSTANCE_HEARTBEAT_TTL_MS = 35_000L;
   private static final long JOB_STALE_AFTER_MS = 30_000L;
+  // Keep a small deletion marker long enough to reject delayed browser writes.
+  private static final long SESSION_TOMBSTONE_RETENTION_MS = Duration.ofDays(30).toMillis();
   private static final String SESSION_KEY_PREFIX = "session:";
   private static final String LOG_KEY_PREFIX = "log:";
   private static final String IMAGE_KEY_PREFIX = "image:";
@@ -99,27 +139,75 @@ public class HaloAiConsoleEndpoint implements CustomEndpoint {
 
   private final ReactiveExtensionClient client;
   private final AiFoundationModelInvoker modelInvoker;
+  private final AttachmentService attachmentService;
   private final ObjectMapper objectMapper = new ObjectMapper();
   private final String instanceId = safeName("instance", UUID.randomUUID().toString());
   private final Map<String, Disposable> runningJobs = new ConcurrentHashMap<>();
   private final Map<String, Map<String, Object>> runningJobStates = new ConcurrentHashMap<>();
   private final Map<String, UserUsageState> usageStates = new ConcurrentHashMap<>();
-  private final Map<String, Sinks.Many<Map<String, Object>>> jobEventSinks = new ConcurrentHashMap<>();
+  private final JobEventRegistry jobEvents = new JobEventRegistry();
+  private final List<Disposable> lifecycleDisposables = new CopyOnWriteArrayList<>();
+  private final AtomicBoolean shuttingDown = new AtomicBoolean(false);
 
   public HaloAiConsoleEndpoint(ReactiveExtensionClient client,
-    AiFoundationModelInvoker modelInvoker) {
+    AiFoundationModelInvoker modelInvoker, AttachmentService attachmentService) {
     this.client = client;
     this.modelInvoker = modelInvoker;
-    Flux.interval(Duration.ZERO, Duration.ofSeconds(10))
+    this.attachmentService = attachmentService;
+    lifecycleDisposables.add(Flux.interval(Duration.ZERO, Duration.ofSeconds(10))
       .flatMap(tick -> heartbeatInstance().onErrorResume(error -> Mono.empty()))
-      .subscribe();
-    Mono.delay(Duration.ofSeconds(15))
+      .subscribe());
+    lifecycleDisposables.add(Mono.delay(Duration.ofSeconds(15))
       .then(markInterruptedJobsV2())
       .onErrorResume(error -> Mono.empty())
-      .subscribe();
-    Flux.interval(Duration.ofMinutes(5), Duration.ofHours(6))
+      .subscribe());
+    lifecycleDisposables.add(Flux.interval(Duration.ofMinutes(5), Duration.ofHours(6))
       .flatMap(tick -> cleanupExpiredRecords().onErrorResume(error -> Mono.empty()))
-      .subscribe();
+      .subscribe());
+  }
+
+  @Override
+  public void destroy() {
+    if (!shuttingDown.compareAndSet(false, true)) {
+      return;
+    }
+    lifecycleDisposables.forEach(Disposable::dispose);
+    lifecycleDisposables.clear();
+    var shutdownWrites = new ArrayList<Mono<Void>>();
+    runningJobs.forEach((key, disposable) -> {
+      var state = runningJobStates.get(key);
+      var splitAt = key.lastIndexOf('/');
+      if (state != null && splitAt > 0) {
+        var owner = key.substring(0, splitAt);
+        var jobId = key.substring(splitAt + 1);
+        var reservationDay = stringValue(state.get("_usageDay"));
+        if (reservationDay.isBlank()) {
+          reservationDay = dayKey(System.currentTimeMillis());
+        }
+        var reservation = new UsageReservation(owner, reservationDay,
+          intValue(state.get("_promptTokens")), intValue(state.get("_reservedTokens")), jobId);
+        shutdownWrites.add(updateJobAndSession(owner, jobId, state, "interrupted",
+            "插件已停用或卸载，任务已中断。")
+          .then(releaseUsageReservation(reservation)));
+        emitJobEvent(owner, jobId, transientJobEvent(jobId,
+          intValue(state.get("_promptTokens")), state, "interrupted", "插件已停用或卸载，任务已中断。"));
+      }
+      disposable.dispose();
+    });
+    if (!shutdownWrites.isEmpty()) {
+      try {
+        Flux.<Void>concatDelayError(Flux.fromIterable(shutdownWrites))
+          .then()
+          .timeout(Duration.ofSeconds(8))
+          .block();
+      } catch (RuntimeException error) {
+        log.warn("Failed to persist interrupted AI jobs during plugin shutdown.", error);
+      }
+    }
+    runningJobs.clear();
+    runningJobStates.clear();
+    jobEvents.completeAll();
+    usageStates.clear();
   }
 
   private static final class UserUsageState {
@@ -129,16 +217,22 @@ public class HaloAiConsoleEndpoint implements CustomEndpoint {
     private int reservedTokens;
   }
 
+  private record PersistedGeneratedImage(Attachment attachment, String permalink) {
+  }
+
   private static final class UsageReservation {
     private final String owner;
     private final String day;
     private final int promptTokens;
+    private final int reservedTokens;
     private final String jobId;
 
-    private UsageReservation(String owner, String day, int promptTokens, String jobId) {
+    private UsageReservation(String owner, String day, int promptTokens, Integer reservedTokens, String jobId) {
       this.owner = owner;
       this.day = day;
       this.promptTokens = Math.max(0, promptTokens);
+      this.reservedTokens = Math.max(this.promptTokens,
+        reservedTokens == null ? this.promptTokens : reservedTokens);
       this.jobId = jobId;
     }
   }
@@ -164,6 +258,7 @@ public class HaloAiConsoleEndpoint implements CustomEndpoint {
       .GET("/sessions-with-messages", this::listSessionsWithMessages)
       .PUT("/sessions/{name}/snapshot", this::saveSessionSnapshot)
       .DELETE("/sessions/{name}", this::deleteSession)
+      .GET("/me/identity", this::currentIdentity)
       .GET("/me/export", this::exportOwnData)
       .DELETE("/me/data", this::deleteOwnData)
       .GET("/call-logs", this::listCallLogs)
@@ -179,6 +274,7 @@ public class HaloAiConsoleEndpoint implements CustomEndpoint {
       .POST("/jobs/chat", this::createChatJob)
       .POST("/jobs/image", this::createImageJob)
       .POST("/models/{name}/generate-text", this::generateText)
+      .GET("/jobs/recoverable", this::listRecoverableJobs)
       .GET("/jobs/{name}", this::getJob)
       .GET("/jobs/{name}/events", this::jobEvents)
       .POST("/jobs/{name}/cancel", this::cancelJob)
@@ -210,10 +306,24 @@ public class HaloAiConsoleEndpoint implements CustomEndpoint {
 
   private Mono<ServerResponse> saveSessionSnapshot(ServerRequest request) {
     var name = safeName("chat", request.pathVariable("name"));
-    return Mono.zip(owner(request), request.bodyToMono(Map.class).map(this::castMap))
+    return Mono.zip(owner(request), requestBodyMap(request))
       .flatMap(tuple -> {
         var owner = tuple.getT1();
         var body = tuple.getT2();
+        var expectedOwner = stringValue(body.get("_expectedOwner"));
+        if (!expectedOwner.isBlank() && !expectedOwner.equals(owner)) {
+          throw new ResponseStatusException(HttpStatus.CONFLICT,
+            "当前登录用户已变化，已拒绝保存其他用户的会话快照。");
+        }
+        var suppliedVersion = longValue(body.get("_baseVersion"));
+        if (suppliedVersion == null) {
+          throw new ResponseStatusException(HttpStatus.UPGRADE_REQUIRED,
+            "客户端版本过旧，请刷新 Halo Console 后再保存会话。");
+        }
+        if (suppliedVersion < 0) {
+          throw new ResponseStatusException(HttpStatus.CONFLICT,
+            "会话版本无效，请刷新页面后重试。");
+        }
         return settingsFor(owner).flatMap(settings -> {
           var maxImageBytes = maxImageBytes(settings);
           var messages = listOfMaps(body.get("messages"));
@@ -226,7 +336,26 @@ public class HaloAiConsoleEndpoint implements CustomEndpoint {
             .collect(Collectors.toList());
           var snapshot = sessionToMap(session, savedMessages);
           enforceSessionSize(snapshot);
-          return updateSessionStore(owner, name, data -> data.put("session", writeMapValue(snapshot)))
+          return updateSessionStore(owner, name, data -> {
+            var storedSession = readMapValue(data.get("session"));
+            var storedVersion = sessionVersion(storedSession);
+            var tombstoneVersion = nullToZero(longValue(data.get("tombstoneVersion")));
+            var currentVersion = Math.max(storedVersion, tombstoneVersion);
+            if (suppliedVersion != null && suppliedVersion != currentVersion) {
+              throw new ResponseStatusException(HttpStatus.CONFLICT,
+                "会话已在其他页面更新或删除，请刷新后重试。");
+            }
+            var storedCreatedAt = longValue(storedSession.get("createdAt"));
+            if (storedCreatedAt != null && storedCreatedAt > 0) {
+              snapshot.put("createdAt", storedCreatedAt);
+            }
+            snapshot.put("updatedAt", System.currentTimeMillis());
+            snapshot.put("_version", currentVersion + 1);
+            enforceSessionSize(snapshot);
+            data.remove("tombstoneVersion");
+            data.remove("deletedAt");
+            data.put("session", writeMapValue(snapshot));
+          })
             .then(ServerResponse.ok().bodyValue(snapshot));
         });
       });
@@ -235,8 +364,8 @@ public class HaloAiConsoleEndpoint implements CustomEndpoint {
   private Mono<ServerResponse> deleteSession(ServerRequest request) {
     var name = safeName("chat", request.pathVariable("name"));
     return owner(request)
-      .flatMap(owner -> updateStore(owner, data -> data.remove(sessionKey(name)))
-        .then(deleteSessionStore(owner, name)))
+      .flatMap(owner -> deleteSessionStore(owner, name)
+        .then(updateStore(owner, data -> data.remove(sessionKey(name)))))
       .then(ServerResponse.noContent().build());
   }
 
@@ -262,6 +391,18 @@ public class HaloAiConsoleEndpoint implements CustomEndpoint {
       .flatMap(result -> ServerResponse.ok()
         .contentType(MediaType.APPLICATION_JSON)
         .bodyValue(result)));
+  }
+
+  private Mono<ServerResponse> currentIdentity(ServerRequest request) {
+    return owner(request).zipWith(request.principal()
+        .map(principal -> principal instanceof Authentication authentication && hasAdminPermission(authentication))
+        .defaultIfEmpty(false))
+      .flatMap(tuple -> {
+        var result = new LinkedHashMap<String, Object>();
+        result.put("owner", tuple.getT1());
+        result.put("canViewAllLogs", tuple.getT2());
+        return ServerResponse.ok().bodyValue(result);
+      });
   }
 
   private Mono<ServerResponse> deleteOwnData(ServerRequest request) {
@@ -334,15 +475,8 @@ public class HaloAiConsoleEndpoint implements CustomEndpoint {
   }
 
   private Mono<ServerResponse> createCallLog(ServerRequest request) {
-    return Mono.zip(owner(request), request.bodyToMono(Map.class).map(this::castMap))
-      .flatMap(tuple -> {
-        var owner = tuple.getT1();
-        var body = tuple.getT2();
-        body.putAll(requestAuditMeta(request));
-        var log = callLogToMap(callLogFromMap(owner, body));
-        return saveLog(owner, log)
-          .then(ServerResponse.ok().bodyValue(log));
-      });
+    return Mono.error(new ResponseStatusException(HttpStatus.FORBIDDEN,
+      "调用日志仅由服务器在模型任务完成后写入，不能由浏览器创建。"));
   }
 
   private Mono<ServerResponse> getImageCache(ServerRequest request) {
@@ -356,7 +490,7 @@ public class HaloAiConsoleEndpoint implements CustomEndpoint {
   }
 
   private Mono<ServerResponse> createImageCache(ServerRequest request) {
-    return Mono.zip(owner(request), request.bodyToMono(Map.class).map(this::castMap))
+    return Mono.zip(owner(request), requestBodyMap(request))
       .flatMap(tuple -> {
         var owner = tuple.getT1();
         return settingsFor(owner).flatMap(settings -> {
@@ -374,7 +508,9 @@ public class HaloAiConsoleEndpoint implements CustomEndpoint {
   }
 
   private Mono<ServerResponse> getGlobalSettings(ServerRequest request) {
-    return globalSettings().flatMap(settings -> ServerResponse.ok().bodyValue(settings));
+    return requireAdminPermission(request)
+      .then(globalSettings())
+      .flatMap(settings -> ServerResponse.ok().bodyValue(settings));
   }
 
   private Mono<ServerResponse> domPurifyAsset(ServerRequest request) {
@@ -391,7 +527,7 @@ public class HaloAiConsoleEndpoint implements CustomEndpoint {
   }
 
   private Mono<ServerResponse> saveSettings(ServerRequest request) {
-    return Mono.zip(owner(request), request.bodyToMono(Map.class).map(this::castMap))
+    return Mono.zip(owner(request), requestBodyMap(request))
       .flatMap(tuple -> {
         var owner = tuple.getT1();
         var settings = validateSettings(tuple.getT2());
@@ -400,11 +536,33 @@ public class HaloAiConsoleEndpoint implements CustomEndpoint {
       });
   }
 
+  private Mono<Map<String, Object>> requestBodyMap(ServerRequest request) {
+    return DataBufferUtils.join(request.bodyToFlux(DataBuffer.class), MAX_JSON_REQUEST_BYTES)
+      .onErrorMap(DataBufferLimitException.class,
+        error -> badRequest("JSON 请求体超过 1 MiB 限制。"))
+      .flatMap(buffer -> {
+        try {
+          var bytes = new byte[buffer.readableByteCount()];
+          buffer.read(bytes);
+          if (bytes.length == 0) {
+            return Mono.error(badRequest("JSON 请求体不能为空。"));
+          }
+          return Mono.just(castMap(objectMapper.readValue(bytes,
+            new TypeReference<Map<String, Object>>() {})));
+        } catch (IOException | IllegalArgumentException error) {
+          return Mono.error(badRequest("JSON 请求体格式无效。"));
+        } finally {
+          DataBufferUtils.release(buffer);
+        }
+      });
+  }
+
   private Mono<ServerResponse> generateText(ServerRequest request) {
-    return Mono.zip(request.bodyToMono(Map.class).map(this::castMap), globalSettings())
+    return ensureActive().then(Mono.zip(owner(request), requestBodyMap(request), globalSettings()))
       .flatMap(tuple -> {
-        var body = tuple.getT1();
-        var globalSettings = tuple.getT2();
+        var owner = tuple.getT1();
+        var body = tuple.getT2();
+        var globalSettings = tuple.getT3();
         var model = limitString(request.pathVariable("name"), 253);
         if (model.isBlank()) {
           throw badRequest("必须选择模型。");
@@ -415,8 +573,14 @@ public class HaloAiConsoleEndpoint implements CustomEndpoint {
           throw badRequest("消息不能为空。");
         }
         validateAiRequestMessages(messages, globalSettings);
-        var maxOutputTokens = clampInt(body.get("maxOutputTokens"), 1, 8192, 1200);
-        return modelInvoker.generateText(model, messages, maxOutputTokens, baseUrl(request))
+        return canonicalizeMessageAttachmentUrls(owner, messages).flatMap(canonicalMessages -> {
+          var maxOutputTokens = clampInt(body.get("maxOutputTokens"), 1, 8192, 1200);
+          var startedAt = System.currentTimeMillis();
+          var promptTokens = estimateRequestTokens(canonicalMessages);
+          var operation = auxiliaryOperation(body.get("operation"));
+          var jobId = nextJobId();
+          return reserveUsage(owner, globalSettings, promptTokens, maxOutputTokens, jobId)
+            .flatMap(reservation -> modelInvoker.generateText(model, canonicalMessages, maxOutputTokens)
           .flatMap(result -> {
             var response = new LinkedHashMap<String, Object>();
             response.put("text", limitString(result.text(), MAX_STREAM_TEXT_LENGTH));
@@ -424,13 +588,20 @@ public class HaloAiConsoleEndpoint implements CustomEndpoint {
             response.put("inputTokens", result.inputTokens());
             response.put("outputTokens", result.outputTokens());
             response.put("totalTokens", result.totalTokens());
-            return ServerResponse.ok().bodyValue(response);
-          });
+            return saveAuthoritativeLog(owner, "", "", "text", operation, model, "success", "",
+                startedAt, promptTokens, result.inputTokens(), result.outputTokens(), result.totalTokens(), request)
+              .then(ServerResponse.ok().bodyValue(response));
+          })
+          .onErrorResume(error -> saveAuthoritativeLog(owner, "", "", "text", operation, model, "error",
+              limitString(cleanAiFoundationError(error), 4000), startedAt, promptTokens, null, null, null, request)
+            .then(Mono.error(error)))
+          .doFinally(signal -> releaseUsageReservation(reservation).subscribe()));
+        });
       });
   }
 
   private Mono<ServerResponse> createChatJob(ServerRequest request) {
-    return Mono.zip(owner(request), request.bodyToMono(Map.class).map(this::castMap), globalSettings())
+    return ensureActive().then(Mono.zip(owner(request), requestBodyMap(request), globalSettings()))
       .flatMap(tuple -> {
         var owner = tuple.getT1();
         var body = tuple.getT2();
@@ -456,43 +627,48 @@ public class HaloAiConsoleEndpoint implements CustomEndpoint {
             throw badRequest("请求消息不能为空。");
           }
           validateAiRequestMessages(requestMessages, globalSettings);
-          var normalizedSession = normalizeSessionSnapshot(sessionId, owner, sessionBody, maxImageBytes(settings));
-          var jobId = nextJobId();
-          var promptTokens = estimateRequestTokens(requestMessages);
-          var now = System.currentTimeMillis();
-          var job = new LinkedHashMap<String, Object>();
-          job.put("id", jobId);
-          job.put("type", "chat");
-          job.put("owner", owner);
-          job.put("sessionId", sessionId);
-          job.put("assistantId", assistantId);
-          job.put("model", model);
-          job.put("status", "running");
-          job.put("createdAt", now);
-          job.put("updatedAt", now);
-          job.put("promptTokens", promptTokens);
-          job.put("completionTokens", 0);
-          job.put("totalTokens", promptTokens);
-          job.put("content", "");
-          job.put("reasoning", "");
-          job.put("reasoningOpen", true);
-          job.put("instanceId", instanceId);
-          job.put("heartbeatAt", now);
-          job.putAll(requestAuditMeta(request));
-          var requestBaseUrl = baseUrl(request);
-          return reserveUsage(owner, globalSettings, promptTokens, jobId)
-            .flatMap(reservation -> saveJob(owner, jobId, job)
-            .then(updateSessionStore(owner, sessionId, data -> data.put("session", writeMapValue(normalizedSession))))
-            .doOnSuccess(ignored -> runChatJob(owner, sessionId, assistantId, jobId, model,
-              requestMessages, promptTokens, requestBaseUrl, globalSettings, reservation))
-            .then(ServerResponse.ok().bodyValue(job))
+          return canonicalizeMessageAttachmentUrls(owner, requestMessages).flatMap(canonicalMessages -> {
+            var normalizedSession = normalizeSessionSnapshot(sessionId, owner, sessionBody, maxImageBytes(settings));
+            var jobId = nextJobId();
+            var promptTokens = estimateRequestTokens(canonicalMessages);
+            var now = System.currentTimeMillis();
+            var job = new LinkedHashMap<String, Object>();
+            job.put("id", jobId);
+            job.put("type", "chat");
+            job.put("owner", owner);
+            job.put("sessionId", sessionId);
+            job.put("assistantId", assistantId);
+            job.put("model", model);
+            job.put("status", "running");
+            job.put("createdAt", now);
+            job.put("updatedAt", now);
+            job.put("promptTokens", promptTokens);
+            job.put("completionTokens", 0);
+            job.put("totalTokens", promptTokens);
+            job.put("content", "");
+            job.put("reasoning", "");
+            job.put("reasoningOpen", true);
+            job.put("instanceId", instanceId);
+            job.put("heartbeatAt", now);
+            job.putAll(requestAuditMeta(request));
+            return reserveUsage(owner, globalSettings, promptTokens, 4096, jobId)
+            .flatMap(reservation -> saveSessionForJob(owner, sessionId, normalizedSession)
+            .flatMap(savedSession -> {
+              job.put("reservedTokens", reservation.reservedTokens);
+              job.put("sessionVersion", sessionVersion(savedSession));
+              return saveJob(owner, jobId, job)
+                .doOnSuccess(ignored -> runChatJob(owner, sessionId, assistantId, jobId, model,
+                  canonicalMessages, promptTokens, globalSettings, reservation))
+                .then(ServerResponse.ok().bodyValue(job));
+            })
             .onErrorResume(error -> releaseUsageReservation(reservation).then(Mono.error(error))));
+          });
         });
       });
   }
 
   private Mono<ServerResponse> createImageJob(ServerRequest request) {
-    return Mono.zip(owner(request), request.bodyToMono(Map.class).map(this::castMap), globalSettings())
+    return ensureActive().then(Mono.zip(owner(request), requestBodyMap(request), globalSettings()))
       .flatMap(tuple -> {
         var owner = tuple.getT1();
         var body = tuple.getT2();
@@ -509,37 +685,42 @@ public class HaloAiConsoleEndpoint implements CustomEndpoint {
         }
         enforceAllowedModel(model, globalSettings);
         validateImagePayload(payload, globalSettings);
-        var normalizedSession = normalizeSessionSnapshot(sessionId, owner, sessionBody, maxImageBytes(globalSettings));
-        var jobId = nextJobId();
-        var now = System.currentTimeMillis();
-        var promptTokens = estimateImagePromptTokens(prompt, payload);
-        var job = new LinkedHashMap<String, Object>();
-        job.put("id", jobId);
-        job.put("type", "image");
-        job.put("owner", owner);
-        job.put("sessionId", sessionId);
-        job.put("assistantId", assistantId);
-        job.put("model", model);
-        job.put("status", "running");
-        job.put("createdAt", now);
-        job.put("updatedAt", now);
-        job.put("promptTokens", promptTokens);
-        job.put("completionTokens", 0);
-        job.put("totalTokens", promptTokens);
-        job.put("content", "正在生成图像...");
-        job.put("images", List.of());
-        job.put("instanceId", instanceId);
-        job.put("heartbeatAt", now);
-        job.putAll(requestAuditMeta(request));
-        var requestBaseUrl = baseUrl(request);
-        var aiPayload = toAiFoundationImagePayload(payload);
-        return reserveUsage(owner, globalSettings, promptTokens, jobId)
-          .flatMap(reservation -> saveJob(owner, jobId, job)
-          .then(updateSessionStore(owner, sessionId, data -> data.put("session", writeMapValue(normalizedSession))))
-          .doOnSuccess(ignored -> runImageJobV2(owner, sessionId, assistantId, jobId, model, aiPayload,
-            promptTokens, requestBaseUrl, globalSettings, reservation))
-          .then(ServerResponse.ok().bodyValue(job))
+        return canonicalizeImagePayload(owner, payload).flatMap(canonicalPayload -> {
+          var normalizedSession = normalizeSessionSnapshot(sessionId, owner, sessionBody, maxImageBytes(globalSettings));
+          var jobId = nextJobId();
+          var now = System.currentTimeMillis();
+          var promptTokens = estimateImagePromptTokens(prompt, canonicalPayload);
+          var job = new LinkedHashMap<String, Object>();
+          job.put("id", jobId);
+          job.put("type", "image");
+          job.put("owner", owner);
+          job.put("sessionId", sessionId);
+          job.put("assistantId", assistantId);
+          job.put("model", model);
+          job.put("status", "running");
+          job.put("createdAt", now);
+          job.put("updatedAt", now);
+          job.put("promptTokens", promptTokens);
+          job.put("completionTokens", 0);
+          job.put("totalTokens", promptTokens);
+          job.put("content", "正在生成图像...");
+          job.put("images", List.of());
+          job.put("instanceId", instanceId);
+          job.put("heartbeatAt", now);
+          job.putAll(requestAuditMeta(request));
+          var aiPayload = toAiFoundationImagePayload(canonicalPayload);
+          return reserveUsage(owner, globalSettings, promptTokens, 4096, jobId)
+          .flatMap(reservation -> saveSessionForJob(owner, sessionId, normalizedSession)
+          .flatMap(savedSession -> {
+            job.put("reservedTokens", reservation.reservedTokens);
+            job.put("sessionVersion", sessionVersion(savedSession));
+            return saveJob(owner, jobId, job)
+              .doOnSuccess(ignored -> runImageJobV2(owner, sessionId, assistantId, jobId, model, aiPayload,
+                promptTokens, globalSettings, reservation))
+                .then(ServerResponse.ok().bodyValue(job));
+          })
           .onErrorResume(error -> releaseUsageReservation(reservation).then(Mono.error(error))));
+        });
       });
   }
 
@@ -550,43 +731,43 @@ public class HaloAiConsoleEndpoint implements CustomEndpoint {
       .switchIfEmpty(ServerResponse.notFound().build()));
   }
 
+  /**
+   * Returns the persisted Job state for the current owner after a browser reconnect. The Job
+   * record, rather than an SSE connection, is the source of truth for recovery.
+   */
+  private Mono<ServerResponse> listRecoverableJobs(ServerRequest request) {
+    return owner(request).flatMap(owner -> jobRecordsForOwner(owner)
+      .map(record -> record.job)
+      .filter(job -> JobLifecyclePolicy.isActive(job.get("status"))
+        || jobUpdatedAt(job) >= System.currentTimeMillis() - Duration.ofMinutes(10).toMillis())
+      .sort((left, right) -> Long.compare(jobUpdatedAt(right), jobUpdatedAt(left)))
+      .take(100)
+      .collectList()
+      .flatMap(jobs -> ServerResponse.ok().bodyValue(jobs)));
+  }
+
   private Mono<ServerResponse> jobEvents(ServerRequest request) {
     var jobId = safeName("job", request.pathVariable("name"));
     return owner(request).flatMap(owner -> fetchJob(owner, jobId).flatMap(initial -> {
       var key = runningJobKey(owner, jobId);
-      var sink = jobSink(key);
-      var events = Flux.concat(Mono.just(initial), sink.asFlux())
-        .map(job -> ServerSentEvent.builder(job)
-          .event("job")
-          .id(stringValue(job.get("id")))
-          .build())
-        .doFinally(signal -> {
-          if (isTerminalJobStatus(initial.get("status"))) {
-            jobEventSinks.remove(key, sink);
-          }
-        });
+      var events = jobEvents.reconnectingStream(key, initial, () -> fetchJob(owner, jobId))
+        .map(this::toJobSse);
       return ServerResponse.ok()
         .contentType(MediaType.TEXT_EVENT_STREAM)
         .body(events, new ParameterizedTypeReference<ServerSentEvent<Map<String, Object>>>() {});
     }).switchIfEmpty(ServerResponse.notFound().build()));
   }
 
-  private Sinks.Many<Map<String, Object>> jobSink(String key) {
-    return jobEventSinks.computeIfAbsent(key, ignored ->
-      Sinks.many().multicast().directBestEffort());
+  private ServerSentEvent<Map<String, Object>> toJobSse(Map<String, Object> job) {
+    return ServerSentEvent.builder(job)
+      .event("job")
+      .id(stringValue(job.get("id")))
+      .build();
   }
 
   private void emitJobEvent(String owner, String jobId, Map<String, Object> job) {
     var key = runningJobKey(owner, jobId);
-    var sink = jobEventSinks.get(key);
-    if (sink == null) {
-      return;
-    }
-    sink.tryEmitNext(new LinkedHashMap<>(job));
-    if (isTerminalJobStatus(job.get("status"))) {
-      sink.tryEmitComplete();
-      jobEventSinks.remove(key, sink);
-    }
+    jobEvents.emit(key, job);
   }
 
   private Map<String, Object> transientJobEvent(String jobId, Integer promptTokens, Map<String, Object> state,
@@ -623,31 +804,50 @@ public class HaloAiConsoleEndpoint implements CustomEndpoint {
 
   private Mono<ServerResponse> cancelJob(ServerRequest request) {
     var jobId = safeName("job", request.pathVariable("name"));
-    return owner(request).flatMap(owner -> {
+    return owner(request).flatMap(owner -> fetchJob(owner, jobId).flatMap(job -> {
+      if (!JobLifecyclePolicy.isActive(job.get("status"))) {
+        throw new ResponseStatusException(HttpStatus.CONFLICT, "任务已经结束，不能取消。");
+      }
       var key = runningJobKey(owner, jobId);
       var disposable = runningJobs.remove(key);
+      var localExecution = disposable != null;
       if (disposable != null && !disposable.isDisposed()) {
         disposable.dispose();
       }
       var state = runningJobStates.remove(key);
-      var flush = state == null
-        ? Mono.<Void>empty()
-        : updateJobAndSession(owner, jobId, state, "cancelled", "Cancelled by user.");
-      return flush.then(updateJob(owner, jobId, job -> {
-          if (!stringValue(job.get("id")).isBlank()) {
-            job.put("status", "cancelled");
-            job.put("error", "Cancelled by user.");
-            job.put("updatedAt", System.currentTimeMillis());
-          }
-        })
-        .then(fetchJob(owner, jobId).flatMap(job -> releasePersistentUsageReservation(new UsageReservation(owner,
-          dayKey(nullToZero(longValue(job.get("createdAt"))) > 0
-            ? nullToZero(longValue(job.get("createdAt")))
-            : System.currentTimeMillis()),
-          intValue(job.get("promptTokens")) == null ? 0 : intValue(job.get("promptTokens")),
-          jobId))))
-        .then(ServerResponse.ok().bodyValue(Map.of("id", jobId, "status", "cancelled"))));
-    });
+      if (state == null) {
+        state = cancellationState(job);
+      }
+      var reservation = new UsageReservation(owner,
+        dayKey(nullToZero(longValue(job.get("createdAt"))) > 0
+          ? nullToZero(longValue(job.get("createdAt")))
+          : System.currentTimeMillis()),
+        intValue(job.get("promptTokens")) == null ? 0 : intValue(job.get("promptTokens")),
+        intValue(job.get("reservedTokens")),
+        jobId);
+      return updateJobAndSession(owner, jobId, state, "cancelled", "Cancelled by user.")
+        // A local subscription releases its in-memory reservation in doFinally. A job running
+        // on another instance has no local subscription, so release only its persistent marker.
+        .then(localExecution ? Mono.empty() : releasePersistentUsageReservation(reservation))
+        .then(fetchJob(owner, jobId))
+        .flatMap(saved -> ServerResponse.ok().bodyValue(saved));
+    }).switchIfEmpty(ServerResponse.notFound().build()));
+  }
+
+  private Map<String, Object> cancellationState(Map<String, Object> job) {
+    var state = new LinkedHashMap<String, Object>();
+    state.put("_type", stringValue(job.get("type")));
+    state.put("_model", stringValue(job.get("model")));
+    state.put("_sessionId", stringValue(job.get("sessionId")));
+    state.put("_assistantId", stringValue(job.get("assistantId")));
+    state.put("_jobId", stringValue(job.get("id")));
+    state.put("_promptTokens", intValue(job.get("promptTokens")));
+    state.put("_reservedTokens", intValue(job.get("reservedTokens")));
+    state.put("content", job.get("content"));
+    state.put("reasoning", job.get("reasoning"));
+    state.put("reasoningOpen", false);
+    state.put("images", listOfStrings(job.get("images")));
+    return state;
   }
 
   private Mono<Void> markInterruptedJobs() {
@@ -659,7 +859,7 @@ public class HaloAiConsoleEndpoint implements CustomEndpoint {
       .flatMap(configMap -> {
         var job = readMapValue(configMap.getData() == null ? null : configMap.getData().get("job"));
         var status = stringValue(job.get("status"));
-        if (!"running".equals(status) && !"pending".equals(status)) {
+        if (!JobLifecyclePolicy.isActive(status)) {
           return Mono.<Void>empty();
         }
         var owner = stringValue(job.get("owner"));
@@ -669,10 +869,12 @@ public class HaloAiConsoleEndpoint implements CustomEndpoint {
         }
         var state = new LinkedHashMap<String, Object>();
         state.put("_type", stringValue(job.get("type")));
+        state.put("_model", stringValue(job.get("model")));
         state.put("_sessionId", stringValue(job.get("sessionId")));
         state.put("_assistantId", stringValue(job.get("assistantId")));
         state.put("_jobId", jobId);
         state.put("_promptTokens", intValue(job.get("promptTokens")));
+        state.put("_reservedTokens", intValue(job.get("reservedTokens")));
         state.put("content", job.get("content"));
         state.put("reasoning", job.get("reasoning"));
         state.put("reasoningOpen", false);
@@ -697,7 +899,7 @@ public class HaloAiConsoleEndpoint implements CustomEndpoint {
       .flatMap(configMap -> {
         var job = readMapValue(configMap.getData() == null ? null : configMap.getData().get("job"));
         var status = stringValue(job.get("status"));
-        if (!"running".equals(status) && !"pending".equals(status)) {
+        if (!JobLifecyclePolicy.isActive(status)) {
           return Mono.<Void>empty();
         }
         var owner = stringValue(job.get("owner"));
@@ -708,15 +910,18 @@ public class HaloAiConsoleEndpoint implements CustomEndpoint {
         var jobInstanceId = stringValue(job.get("instanceId"));
         var heartbeatAt = nullToZero(longValue(job.get("heartbeatAt")));
         return isInstanceAlive(jobInstanceId).flatMap(alive -> {
-          if (alive && now - heartbeatAt <= Duration.ofMinutes(10).toMillis()) {
+          if (!JobLifecyclePolicy.shouldInterrupt(alive, now, heartbeatAt,
+            Duration.ofMinutes(10).toMillis())) {
             return Mono.<Void>empty();
           }
           var state = new LinkedHashMap<String, Object>();
           state.put("_type", stringValue(job.get("type")));
+          state.put("_model", stringValue(job.get("model")));
           state.put("_sessionId", stringValue(job.get("sessionId")));
           state.put("_assistantId", stringValue(job.get("assistantId")));
           state.put("_jobId", jobId);
           state.put("_promptTokens", intValue(job.get("promptTokens")));
+          state.put("_reservedTokens", intValue(job.get("reservedTokens")));
           state.put("content", job.get("content"));
           state.put("reasoning", job.get("reasoning"));
           state.put("reasoningOpen", false);
@@ -732,7 +937,7 @@ public class HaloAiConsoleEndpoint implements CustomEndpoint {
               savedJob.put("updatedAt", System.currentTimeMillis());
             }))
             .then(releasePersistentUsageReservation(new UsageReservation(owner, day,
-              promptTokens == null ? 0 : promptTokens, jobId)));
+              promptTokens == null ? 0 : promptTokens, intValue(job.get("reservedTokens")), jobId)));
         });
       })
       .then();
@@ -779,15 +984,11 @@ public class HaloAiConsoleEndpoint implements CustomEndpoint {
         if (file == null) {
           throw badRequest("请选择要上传的图片。");
         }
-        var mediaType = file.headers().getContentType();
-        if (mediaType == null || !mediaType.toString().startsWith("image/")) {
-          throw badRequest("当前上传入口仅支持图片。");
-        }
         var declaredLength = file.headers().getContentLength();
         if (declaredLength > maxImageBytes || declaredLength > HARD_MAX_IMAGE_BYTES) {
           throw badRequest("图片大小超过管理员配置的上限。");
         }
-        return DataBufferUtils.join(file.content(), (int) Math.min(maxImageBytes, HARD_MAX_IMAGE_BYTES) + 1)
+        return throttleImageUpload(DataBufferUtils.join(file.content(), (int) Math.min(maxImageBytes, HARD_MAX_IMAGE_BYTES) + 1)
           .onErrorMap(DataBufferLimitException.class, e -> badRequest("图片大小超过管理员配置的上限。"))
           .flatMap(buffer -> {
             try {
@@ -796,40 +997,43 @@ public class HaloAiConsoleEndpoint implements CustomEndpoint {
               if (bytes.length > maxImageBytes || bytes.length > HARD_MAX_IMAGE_BYTES) {
                 throw badRequest("图片大小超过管理员配置的上限。");
               }
-              return forwardAttachmentUpload(request, file, bytes, mediaType);
+              return Mono.fromCallable(() -> ImageUploadPolicy.sanitize(bytes, maxImageBytes))
+                .subscribeOn(Schedulers.boundedElastic())
+                .onErrorMap(ImageUploadPolicy.InvalidImageException.class,
+                  error -> badRequest(error.getMessage()))
+                .flatMap(image -> forwardAttachmentUpload(file, image.bytes(),
+                  MediaType.parseMediaType(image.mediaType())));
             } finally {
               DataBufferUtils.release(buffer);
             }
-          });
+          }));
       })));
   }
 
-  private Mono<ServerResponse> forwardAttachmentUpload(ServerRequest request, FilePart file, byte[] bytes,
-    MediaType mediaType) {
-    var resource = new ByteArrayResource(bytes) {
-      @Override
-      public String getFilename() {
-        return file.filename();
+  private Mono<ServerResponse> throttleImageUpload(Mono<ServerResponse> operation) {
+    return Mono.defer(() -> {
+      if (!IMAGE_UPLOAD_PERMITS.tryAcquire()) {
+        return Mono.error(new ResponseStatusException(HttpStatus.TOO_MANY_REQUESTS,
+          "图片上传繁忙，请稍后重试。"));
       }
-    };
-    var builder = new MultipartBodyBuilder();
-    builder.part("file", resource)
-      .filename(file.filename())
-      .contentType(mediaType);
-    var target = baseUrl(request) + "/apis/console.api.storage.halo.run/v1alpha1/attachments/-/upload";
-    return WebClient.create().post()
-      .uri(target)
-      .headers(headers -> {
-        copyHeader(request, headers, HttpHeaders.COOKIE);
-        copyHeader(request, headers, "X-XSRF-TOKEN");
-        copyHeader(request, headers, HttpHeaders.AUTHORIZATION);
-      })
-      .contentType(MediaType.MULTIPART_FORM_DATA)
-      .body(BodyInserters.fromMultipartData(builder.build()))
-      .exchangeToMono(response -> response.bodyToMono(String.class).defaultIfEmpty("")
-        .flatMap(body -> ServerResponse.status(response.statusCode())
-          .contentType(response.headers().contentType().orElse(MediaType.APPLICATION_JSON))
-          .bodyValue(body)));
+      return operation.doFinally(signal -> IMAGE_UPLOAD_PERMITS.release());
+    });
+  }
+
+  private Mono<ServerResponse> forwardAttachmentUpload(FilePart file, byte[] bytes, MediaType mediaType) {
+    var filename = limitString(file.filename(), 255);
+    return attachmentService.upload(null, null, filename,
+        Flux.just(DefaultDataBufferFactory.sharedInstance.wrap(bytes)), mediaType)
+      .flatMap(attachment -> attachmentService.getPermalink(attachment)
+        .flatMap(permalink -> {
+          var response = objectMapper.convertValue(attachment, new TypeReference<Map<String, Object>>() {});
+          var status = castMapValue(response.get("status"));
+          status.put("permalink", permalink.toString());
+          response.put("status", status);
+          return ServerResponse.ok().contentType(MediaType.APPLICATION_JSON).bodyValue(response);
+        }))
+      .onErrorMap(error -> new ResponseStatusException(HttpStatus.BAD_GATEWAY,
+        "Halo 附件服务无法保存该图片，请检查附件存储策略后重试。", error));
   }
 
   private Mono<ServerResponse> legacyMigrationStatus(ServerRequest request) {
@@ -924,37 +1128,22 @@ public class HaloAiConsoleEndpoint implements CustomEndpoint {
   }
 
   private Mono<String> owner(ServerRequest request) {
-    return request.principal().map(Principal::getName).defaultIfEmpty("anonymous");
+    return request.principal()
+      .map(Principal::getName)
+      .map(String::trim)
+      .filter(name -> !name.isBlank())
+      .switchIfEmpty(Mono.error(new ResponseStatusException(HttpStatus.UNAUTHORIZED,
+        "请先登录后再使用 AI 聊天。")));
   }
 
   private Mono<List<Map<String, Object>>> legacyRestItems(ServerRequest request, String plural) {
-    return legacyRestItemsPage(request, plural, 1, new ArrayList<>());
+    return Mono.error(new ResponseStatusException(HttpStatus.GONE,
+      "旧版扩展数据无法在当前 Halo 运行时安全读取。请使用备份或在旧版插件环境中导出后再迁移。"));
   }
 
   private Mono<List<Map<String, Object>>> legacyRestItemsPage(ServerRequest request, String plural, int page,
     List<Map<String, Object>> accumulated) {
-    var target = baseUrl(request) + "/apis/halo-ai-console.halo.run/v1alpha1/" + plural
-      + "?page=" + page + "&size=25";
-    return WebClient.builder()
-      .codecs(configurer -> configurer.defaultCodecs().maxInMemorySize((int) HARD_MAX_IMAGE_BYTES))
-      .build()
-      .get()
-      .uri(target)
-      .headers(headers -> {
-        copyHeader(request, headers, HttpHeaders.COOKIE);
-        copyHeader(request, headers, "X-XSRF-TOKEN");
-        copyHeader(request, headers, HttpHeaders.AUTHORIZATION);
-      })
-      .retrieve()
-      .bodyToMono(Map.class)
-      .map(this::castMap)
-      .flatMap(body -> {
-        accumulated.addAll(listOfMaps(body.get("items")));
-        if (Boolean.TRUE.equals(booleanValue(body.get("hasNext")))) {
-          return legacyRestItemsPage(request, plural, page + 1, accumulated);
-        }
-        return Mono.just(accumulated);
-      });
+    return legacyRestItems(request, plural);
   }
 
   private List<Map<String, Object>> legacyItemsForOwner(List<Map<String, Object>> items, String owner) {
@@ -983,6 +1172,7 @@ public class HaloAiConsoleEndpoint implements CustomEndpoint {
     message.put("id", emptyToDefault(stringValue(spec.get("id")), metadataName(item)));
     message.put("sessionId", stringValue(spec.get("sessionId")));
     message.put("role", stringValue(spec.get("role")));
+    message.put("favorite", booleanValue(spec.get("favorite")));
     message.put("content", limitString(stringValue(spec.get("content")), MAX_CONTENT_LENGTH));
     message.put("reasoning", limitString(stringValue(spec.get("reasoning")), MAX_REASONING_LENGTH));
     message.put("reasoningOpen", booleanValue(spec.get("reasoningOpen")));
@@ -1104,21 +1294,24 @@ public class HaloAiConsoleEndpoint implements CustomEndpoint {
   }
 
   private void runChatJob(String owner, String sessionId, String assistantId, String jobId, String model,
-    List<Map<String, Object>> requestMessages, Integer promptTokens, String requestBaseUrl,
-    Map<String, Object> globalSettings, UsageReservation reservation) {
+    List<Map<String, Object>> requestMessages, Integer promptTokens, Map<String, Object> globalSettings,
+    UsageReservation reservation) {
     var state = new LinkedHashMap<String, Object>();
     state.put("content", "");
     state.put("reasoning", "");
     state.put("reasoningOpen", true);
     state.put("maxOutputCharacters", clampInt(globalSettings.get("maxOutputCharacters"), 4000, MAX_STREAM_TEXT_LENGTH, MAX_STREAM_TEXT_LENGTH));
     state.put("_type", "chat");
+    state.put("_model", model);
     state.put("_sessionId", sessionId);
     state.put("_assistantId", assistantId);
     state.put("_jobId", jobId);
     state.put("_promptTokens", promptTokens);
+    state.put("_reservedTokens", reservation.reservedTokens);
+    state.put("_usageDay", reservation.day);
     var key = runningJobKey(owner, jobId);
     runningJobStates.put(key, state);
-    var disposable = modelInvoker.streamText(model, requestMessages, 4096, requestBaseUrl)
+    var disposable = modelInvoker.streamText(model, requestMessages, 4096)
       .flatMap(stream -> stream.deltas()
         .concatMap(delta -> applyChatDelta(owner, sessionId, assistantId, jobId, promptTokens, state, delta))
         .then(stream.result().doOnNext(result -> applyChatResult(state, result)).then()))
@@ -1128,7 +1321,9 @@ public class HaloAiConsoleEndpoint implements CustomEndpoint {
       .doFinally(signal -> {
         runningJobs.remove(key);
         runningJobStates.remove(key);
-        releaseUsageReservation(reservation).subscribe();
+        if (!shuttingDown.get()) {
+          releaseUsageReservation(reservation).subscribe();
+        }
       })
       .subscribe();
     runningJobs.put(key, disposable);
@@ -1139,44 +1334,56 @@ public class HaloAiConsoleEndpoint implements CustomEndpoint {
   }
 
   private void runImageJobV2(String owner, String sessionId, String assistantId, String jobId, String model,
-    Map<String, Object> payload, Integer promptTokens, String requestBaseUrl,
-    Map<String, Object> globalSettings, UsageReservation reservation) {
+    Map<String, Object> payload, Integer promptTokens, Map<String, Object> globalSettings,
+    UsageReservation reservation) {
     var state = new LinkedHashMap<String, Object>();
     state.put("content", "正在生成图像...");
     state.put("images", new ArrayList<String>());
     state.put("_type", "image");
+    state.put("_model", model);
     state.put("_sessionId", sessionId);
     state.put("_assistantId", assistantId);
     state.put("_jobId", jobId);
     state.put("_promptTokens", promptTokens);
+    state.put("_reservedTokens", reservation.reservedTokens);
+    state.put("_usageDay", reservation.day);
     var key = runningJobKey(owner, jobId);
     runningJobStates.put(key, state);
     var maxImageBytes = maxImageBytes(globalSettings);
+    var persistedImages = new CopyOnWriteArrayList<PersistedGeneratedImage>();
+    var resultCommitted = new AtomicBoolean(false);
+    var rollbackStarted = new AtomicBoolean(false);
     var stream = updateImageJobAndSession(owner, sessionId, assistantId, jobId, promptTokens, state, "running", "")
-      .then(modelInvoker.generateImage(model, payload, requestBaseUrl))
+      .then(modelInvoker.generateImage(model, payload))
       .flatMap(result -> {
-        var images = result.images().stream()
-          .map(this::generatedImageReference)
-          .filter(reference -> !reference.isBlank())
-          .toList();
-        mergeImages(state, images, maxImageBytes);
-        state.put("_actualInputTokens", result.inputTokens());
-        state.put("_actualOutputTokens", result.outputTokens());
-        state.put("_actualTotalTokens", result.totalTokens());
-        if (listOfStrings(state.get("images")).isEmpty()) {
-          state.put("content", "图像模型完成了请求，但没有返回图像。");
-        } else {
-          state.put("content", "已生成图像：");
-        }
-        return updateImageJobAndSession(owner, sessionId, assistantId, jobId, promptTokens, state, "success", "");
+        return Flux.fromIterable(result.images())
+          .concatMap(image -> persistGeneratedImage(image, maxImageBytes)
+            .doOnNext(persistedImages::add))
+          .collectList()
+          .flatMap(images -> {
+            mergeImages(state, images.stream().map(PersistedGeneratedImage::permalink).toList(), maxImageBytes);
+            state.put("_actualInputTokens", result.inputTokens());
+            state.put("_actualOutputTokens", result.outputTokens());
+            state.put("_actualTotalTokens", result.totalTokens());
+            state.put("content", images.isEmpty() ? "图像模型完成了请求，但没有返回图像。" : "已生成图像：");
+            return updateImageJobAndSession(owner, sessionId, assistantId, jobId, promptTokens, state, "success", "")
+              .doOnSuccess(ignored -> resultCommitted.set(true));
+          })
+          .onErrorResume(error -> rollbackGeneratedImagesOnce(persistedImages, rollbackStarted)
+            .then(Mono.error(error)));
       });
     var disposable = stream
       .onErrorResume(error -> updateImageJobAndSession(owner, sessionId, assistantId, jobId, promptTokens, state,
         "error", limitString(cleanAiFoundationError(error), 4000)))
       .doFinally(signal -> {
+        if (!resultCommitted.get()) {
+          rollbackGeneratedImagesOnce(persistedImages, rollbackStarted).subscribe();
+        }
         runningJobs.remove(key);
         runningJobStates.remove(key);
-        releaseUsageReservation(reservation).subscribe();
+        if (!shuttingDown.get()) {
+          releaseUsageReservation(reservation).subscribe();
+        }
       })
       .subscribe();
     runningJobs.put(key, disposable);
@@ -1250,6 +1457,73 @@ public class HaloAiConsoleEndpoint implements CustomEndpoint {
     return "data:" + (mediaType.isBlank() ? "image/png" : mediaType) + ";base64," + base64;
   }
 
+  private Mono<PersistedGeneratedImage> persistGeneratedImage(AiFoundationModelInvoker.GeneratedImage image,
+    long maxImageBytes) {
+    return Mono.fromCallable(() -> generatedImageBytes(image, maxImageBytes))
+      .subscribeOn(Schedulers.boundedElastic())
+      .map(bytes -> ImageUploadPolicy.sanitize(bytes, maxImageBytes))
+      .flatMap(sanitized -> attachmentService.upload(null, null, "ai-generated.png",
+          Flux.just(DefaultDataBufferFactory.sharedInstance.wrap(sanitized.bytes())),
+          MediaType.parseMediaType(sanitized.mediaType()))
+        .flatMap(attachment -> attachmentService.getPermalink(attachment)
+          .map(permalink -> new PersistedGeneratedImage(attachment, permalink.toString()))
+          .onErrorResume(error -> attachmentService.delete(attachment).then(Mono.error(error)))))
+      .onErrorMap(error -> new IllegalStateException("无法将生成图片保存到 Halo 附件库。", error));
+  }
+
+  private Mono<Void> rollbackGeneratedImages(List<PersistedGeneratedImage> images) {
+    return Flux.fromIterable(images)
+      .concatMap(image -> attachmentService.delete(image.attachment())
+        .onErrorResume(error -> {
+          log.warn("Unable to roll back generated attachment {}", image.attachment().getMetadata().getName(), error);
+          return Mono.empty();
+        }))
+      .then();
+  }
+
+  private Mono<Void> rollbackGeneratedImagesOnce(List<PersistedGeneratedImage> images,
+    AtomicBoolean rollbackStarted) {
+    if (images.isEmpty() || !rollbackStarted.compareAndSet(false, true)) {
+      return Mono.empty();
+    }
+    return rollbackGeneratedImages(images);
+  }
+
+  private byte[] generatedImageBytes(AiFoundationModelInvoker.GeneratedImage image, long maxImageBytes) throws IOException {
+    var base64 = stringValue(image == null ? null : image.base64());
+    if (!base64.isBlank()) {
+      var value = base64.startsWith("data:") ? base64.substring(base64.indexOf(',') + 1) : base64;
+      return RemoteImageContentPolicy.decodeBase64(value, Math.min(maxImageBytes, HARD_MAX_IMAGE_BYTES));
+    }
+    var value = stringValue(image == null ? null : image.url());
+    var uri = RemoteImageContentPolicy.requirePublicHttpsUri(value);
+    var connection = (HttpURLConnection) new URL(uri.toString()).openConnection();
+    connection.setConnectTimeout((int) GENERATED_IMAGE_DOWNLOAD_TIMEOUT.toMillis());
+    connection.setReadTimeout((int) GENERATED_IMAGE_DOWNLOAD_TIMEOUT.toMillis());
+    connection.setInstanceFollowRedirects(false);
+    connection.setRequestProperty(HttpHeaders.ACCEPT, "image/png,image/jpeg");
+    var length = connection.getContentLengthLong();
+    if (length > maxImageBytes || length > HARD_MAX_IMAGE_BYTES) {
+      throw new IOException("生成图片超过大小限制。");
+    }
+    if (connection.getResponseCode() != HttpURLConnection.HTTP_OK) {
+      throw new IOException("生成图片下载失败，HTTP " + connection.getResponseCode());
+    }
+    try (InputStream input = connection.getInputStream(); var output = new java.io.ByteArrayOutputStream()) {
+      input.transferTo(new java.io.FilterOutputStream(output) {
+        @Override public void write(byte[] buffer, int offset, int length) throws IOException {
+          if (output.size() + length > maxImageBytes || output.size() + length > HARD_MAX_IMAGE_BYTES) {
+            throw new IOException("生成图片超过大小限制。");
+          }
+          super.write(buffer, offset, length);
+        }
+      });
+      return output.toByteArray();
+    } finally {
+      connection.disconnect();
+    }
+  }
+
   private Mono<Void> markChatJobFinished(String owner, String sessionId, String assistantId, String jobId,
     Integer promptTokens, Map<String, Object> state, String status, String error) {
     if ("success".equals(status)
@@ -1302,59 +1576,22 @@ public class HaloAiConsoleEndpoint implements CustomEndpoint {
       Mono<Void> saveLog = Mono.empty();
       if (!"running".equals(status) && !Boolean.TRUE.equals(job.get("logged"))) {
         job.put("logged", true);
-        var log = new LinkedHashMap<String, Object>();
-        log.put("owner", owner);
-        log.put("sessionId", sessionId);
-        log.put("sessionTitle", session.get("title"));
-        log.put("type", "chat");
-        log.put("operation", "chat");
-        log.put("model", job.get("model"));
-        log.put("status", status);
-        log.put("error", error);
-        log.put("time", now);
-        log.put("durationMs", Math.max(0L, now - nullToZero(longValue(job.get("createdAt")))));
-        log.put("promptTokens", effectivePromptTokens);
-        log.put("completionTokens", completionTokens);
-        log.put("totalTokens", totalTokens);
-        copyAuditFields(job, log);
+        var log = AuditRecordFactory.create(owner, sessionId, stringValue(session.get("title")),
+          "chat", "chat", job.get("model"), status, error,
+          nullToZero(longValue(job.get("createdAt"))), now, effectivePromptTokens,
+          completionTokens, totalTokens, job);
         saveLog = saveLog(owner, log).then(incrementDailyUsage(owner, dayKey(now), totalTokens));
       }
       var savedJob = new LinkedHashMap<String, Object>(job);
-      return saveJob(owner, jobId, savedJob).then(saveLog).then(updateSessionStore(owner, sessionId, data -> {
-      var messages = listOfMaps(session.get("messages"));
-      var found = false;
-      for (var message : messages) {
-        if (assistantId.equals(stringValue(message.get("id")))) {
-          message.put("content", state.get("content"));
-          message.put("reasoning", state.get("reasoning"));
-          message.put("reasoningOpen", state.get("reasoningOpen"));
-          message.put("updatedAt", now);
-          message.put("promptTokens", effectivePromptTokens);
-          message.put("completionTokens", completionTokens);
-          message.put("totalTokens", totalTokens);
-          found = true;
-          break;
-        }
-      }
-      if (!found) {
-        var assistant = new LinkedHashMap<String, Object>();
-        assistant.put("id", assistantId);
-        assistant.put("role", "assistant");
-        assistant.put("content", state.get("content"));
-        assistant.put("reasoning", state.get("reasoning"));
-        assistant.put("reasoningOpen", state.get("reasoningOpen"));
-        assistant.put("createdAt", now);
-        assistant.put("updatedAt", now);
-        assistant.put("promptTokens", effectivePromptTokens);
-        assistant.put("completionTokens", completionTokens);
-        assistant.put("totalTokens", totalTokens);
-        messages.add(assistant);
-      }
-      session.put("messages", messages);
-      session.put("updatedAt", now);
-      enforceSessionSize(session);
-      data.put("session", writeMapValue(session));
-      })).then(Mono.fromRunnable(() -> emitJobEvent(owner, jobId, savedJob)));
+      var logWrite = saveLog;
+      return updateSessionStore(owner, sessionId, data -> mergeChatJobResult(data, assistantId, state, status,
+          now, effectivePromptTokens, completionTokens, totalTokens))
+        .map(updated -> sessionVersion(readMapValue(updated.getData().get("session"))))
+        .flatMap(version -> {
+          savedJob.put("sessionVersion", version);
+          return saveJob(owner, jobId, savedJob).then(logWrite)
+            .then(Mono.fromRunnable(() -> emitJobEvent(owner, jobId, savedJob)));
+        });
     }));
   }
 
@@ -1383,59 +1620,23 @@ public class HaloAiConsoleEndpoint implements CustomEndpoint {
       Mono<Void> saveLog = Mono.empty();
       if (!"running".equals(status) && !Boolean.TRUE.equals(job.get("logged"))) {
         job.put("logged", true);
-        var log = new LinkedHashMap<String, Object>();
-        log.put("owner", owner);
-        log.put("sessionId", sessionId);
-        log.put("sessionTitle", session.get("title"));
-        log.put("type", "image");
-        log.put("operation", "image");
-        log.put("model", job.get("model"));
-        log.put("status", status);
-        log.put("error", error);
-        log.put("time", now);
-        log.put("durationMs", Math.max(0L, now - nullToZero(longValue(job.get("createdAt")))));
-        log.put("promptTokens", effectivePromptTokens);
-        log.put("completionTokens", completionTokens);
-        log.put("totalTokens", totalTokens);
-        copyAuditFields(job, log);
+        var log = AuditRecordFactory.create(owner, sessionId, stringValue(session.get("title")),
+          "image", "image", job.get("model"), status, error,
+          nullToZero(longValue(job.get("createdAt"))), now, effectivePromptTokens,
+          completionTokens, totalTokens, job);
         saveLog = saveLog(owner, log)
           .then(incrementDailyUsage(owner, dayKey(now), totalTokens));
       }
       var savedJob = new LinkedHashMap<String, Object>(job);
-      return saveJob(owner, jobId, savedJob).then(saveLog).then(updateSessionStore(owner, sessionId, data -> {
-      var messages = listOfMaps(session.get("messages"));
-      var found = false;
-      for (var message : messages) {
-        if (assistantId.equals(stringValue(message.get("id")))) {
-          message.put("content", limitString(stringValue(state.get("content")), MAX_CONTENT_LENGTH));
-          message.put("images", images);
-          message.put("streaming", "running".equals(status));
-          message.put("updatedAt", now);
-          message.put("promptTokens", effectivePromptTokens);
-          message.put("completionTokens", completionTokens);
-          message.put("totalTokens", totalTokens);
-          found = true;
-          break;
-        }
-      }
-      if (!found) {
-        var assistant = new LinkedHashMap<String, Object>();
-        assistant.put("id", assistantId);
-        assistant.put("role", "assistant");
-        assistant.put("content", limitString(stringValue(state.get("content")), MAX_CONTENT_LENGTH));
-        assistant.put("images", images);
-        assistant.put("createdAt", now);
-        assistant.put("updatedAt", now);
-        assistant.put("promptTokens", effectivePromptTokens);
-        assistant.put("completionTokens", completionTokens);
-        assistant.put("totalTokens", totalTokens);
-        messages.add(assistant);
-      }
-      session.put("messages", messages);
-      session.put("updatedAt", now);
-      enforceSessionSize(session);
-      data.put("session", writeMapValue(session));
-      })).then(Mono.fromRunnable(() -> emitJobEvent(owner, jobId, savedJob)));
+      var logWrite = saveLog;
+      return updateSessionStore(owner, sessionId, data -> mergeImageJobResult(data, assistantId, state,
+          images, status, now, effectivePromptTokens, completionTokens, totalTokens))
+        .map(updated -> sessionVersion(readMapValue(updated.getData().get("session"))))
+        .flatMap(version -> {
+          savedJob.put("sessionVersion", version);
+          return saveJob(owner, jobId, savedJob).then(logWrite)
+            .then(Mono.fromRunnable(() -> emitJobEvent(owner, jobId, savedJob)));
+        });
     }));
   }
 
@@ -1467,8 +1668,9 @@ public class HaloAiConsoleEndpoint implements CustomEndpoint {
     spec.setMemory(limitString(stringValue(body.get("memory")), MAX_MEMORY_LENGTH));
     spec.setTags(cleanTags(listOfStrings(body.get("tags"))));
     spec.setContextClearedAt(longValue(body.get("contextClearedAt")));
-    spec.setCreatedAt(longOrNow(body.get("createdAt")));
-    spec.setUpdatedAt(longOrNow(body.get("updatedAt")));
+    // Cache retention must use a server-authoritative creation time.
+    spec.setCreatedAt(System.currentTimeMillis());
+    spec.setUpdatedAt(System.currentTimeMillis());
     session.setSpec(spec);
     return session;
   }
@@ -1489,6 +1691,10 @@ public class HaloAiConsoleEndpoint implements CustomEndpoint {
     spec.setOwner(owner);
     spec.setSessionId(sessionId);
     spec.setRole(role);
+    var generation = castMapValue(body.get("generation"));
+    spec.setGenerationType(limitString(stringValue(generation.get("type")), 32));
+    spec.setGenerationModel(limitString(stringValue(generation.get("model")), 253));
+    spec.setFavorite(booleanValue(body.get("favorite")));
     spec.setContent(limitString(stringValue(body.get("content")), MAX_CONTENT_LENGTH));
     spec.setReasoning(limitString(stringValue(body.get("reasoning")), MAX_REASONING_LENGTH));
     spec.setReasoningOpen(booleanValue(body.get("reasoningOpen")));
@@ -1544,7 +1750,7 @@ public class HaloAiConsoleEndpoint implements CustomEndpoint {
     validateDataUrlSize(dataUrl, maxImageBytes);
     spec.setDataUrl(limitString(dataUrl, MAX_DATA_URL_LENGTH));
     spec.setMediaType(validateMediaType(stringValue(body.get("mediaType"))));
-    spec.setCreatedAt(longOrNow(body.get("createdAt")));
+    spec.setCreatedAt(System.currentTimeMillis());
     cache.setSpec(spec);
     return cache;
   }
@@ -1568,6 +1774,10 @@ public class HaloAiConsoleEndpoint implements CustomEndpoint {
     var item = new LinkedHashMap<String, Object>();
     item.put("id", emptyToDefault(spec.getId(), idOf(message)));
     item.put("role", spec.getRole());
+    if (!stringValue(spec.getGenerationType()).isBlank() && !stringValue(spec.getGenerationModel()).isBlank()) {
+      item.put("generation", Map.of("type", spec.getGenerationType(), "model", spec.getGenerationModel()));
+    }
+    item.put("favorite", Boolean.TRUE.equals(spec.getFavorite()));
     item.put("content", spec.getContent());
     item.put("reasoning", spec.getReasoning());
     item.put("reasoningOpen", spec.getReasoningOpen());
@@ -1623,7 +1833,17 @@ public class HaloAiConsoleEndpoint implements CustomEndpoint {
 
   private Mono<Map<String, Object>> fetchSessionSnapshot(String owner, String sessionId) {
     return client.fetch(ConfigMap.class, sessionStoreName(owner, sessionId))
-      .map(configMap -> readMapValue(configMap.getData() == null ? null : configMap.getData().get("session")))
+      .map(configMap -> {
+        var data = configMap.getData();
+        if (isSessionTombstoned(data)) {
+          var deleted = new LinkedHashMap<String, Object>();
+          deleted.put("id", sessionId);
+          deleted.put("_deleted", true);
+          deleted.put("_version", nullToZero(longValue(data.get("tombstoneVersion"))));
+          return deleted;
+        }
+        return readMapValue(data == null ? null : data.get("session"));
+      })
       .filter(session -> !stringValue(session.get("id")).isBlank())
       .switchIfEmpty(fetchStore(owner)
         .map(store -> readMapValue(store.getData().get(sessionKey(sessionId))))
@@ -1631,6 +1851,7 @@ public class HaloAiConsoleEndpoint implements CustomEndpoint {
       .switchIfEmpty(Mono.defer(() -> {
         var session = new LinkedHashMap<String, Object>();
         session.put("id", sessionId);
+        session.put("_version", 0L);
         session.put("title", "Halo AI");
         session.put("memory", "");
         session.put("createdAt", System.currentTimeMillis());
@@ -1656,6 +1877,134 @@ public class HaloAiConsoleEndpoint implements CustomEndpoint {
       configMap.setData(data);
       return client.update(configMap);
     }).retryWhen(Retry.backoff(4, Duration.ofMillis(60)).filter(this::isOptimisticLockConflict));
+  }
+
+  private Mono<Map<String, Object>> saveSessionForJob(String owner, String sessionId, Map<String, Object> session) {
+    return updateSessionStore(owner, sessionId, data -> {
+      if (isSessionTombstoned(data)) {
+        throw new ResponseStatusException(HttpStatus.CONFLICT,
+          "会话已删除，不能继续创建任务或写入回复。");
+      }
+      var existing = readMapValue(data.get("session"));
+      var merged = mergeSessionForJob(existing, session);
+      merged.put("_version", sessionVersion(existing) + 1);
+      enforceSessionSize(merged);
+      data.put("session", writeMapValue(merged));
+    }).map(updated -> readMapValue(updated.getData().get("session")));
+  }
+
+  private boolean isSessionTombstoned(Map<String, String> data) {
+    return data != null && !data.containsKey("session")
+      && nullToZero(longValue(data.get("tombstoneVersion"))) > 0;
+  }
+
+  private Map<String, Object> mergeSessionForJob(Map<String, Object> existing,
+    Map<String, Object> incoming) {
+    if (stringValue(existing.get("id")).isBlank()) {
+      return new LinkedHashMap<>(incoming);
+    }
+    var merged = new LinkedHashMap<String, Object>(existing);
+    var messages = new ArrayList<Map<String, Object>>(listOfMaps(existing.get("messages")));
+    var knownMessageIds = messages.stream()
+      .map(message -> stringValue(message.get("id")))
+      .filter(id -> !id.isBlank())
+      .collect(Collectors.toSet());
+    for (var message : listOfMaps(incoming.get("messages"))) {
+      var messageId = stringValue(message.get("id"));
+      if (!messageId.isBlank() && knownMessageIds.add(messageId)) {
+        messages.add(new LinkedHashMap<>(message));
+      }
+    }
+    merged.put("messages", messages);
+    if (messages.size() > listOfMaps(existing.get("messages")).size()) {
+      merged.put("updatedAt", Math.max(
+        nullToZero(longValue(existing.get("updatedAt"))),
+        nullToZero(longValue(incoming.get("updatedAt")))));
+    }
+    return merged;
+  }
+
+  private void mergeChatJobResult(Map<String, String> data, String assistantId,
+    Map<String, Object> state, String status, long now, Integer promptTokens, Integer completionTokens,
+    Integer totalTokens) {
+    if (isSessionTombstoned(data)) {
+      return;
+    }
+    var session = readMapValue(data.get("session"));
+    if (stringValue(session.get("id")).isBlank()) {
+      return;
+    }
+    var messages = listOfMaps(session.get("messages"));
+    Map<String, Object> assistant = null;
+    for (var message : messages) {
+      if (assistantId.equals(stringValue(message.get("id")))) {
+        assistant = message;
+        break;
+      }
+    }
+    if (assistant == null) {
+      assistant = new LinkedHashMap<>();
+      assistant.put("id", assistantId);
+      assistant.put("role", "assistant");
+      assistant.put("createdAt", now);
+      messages.add(assistant);
+    }
+    assistant.put("content", limitString(stringValue(state.get("content")), MAX_CONTENT_LENGTH));
+    assistant.put("reasoning", limitString(stringValue(state.get("reasoning")), MAX_REASONING_LENGTH));
+    assistant.put("reasoningOpen", state.get("reasoningOpen"));
+    assistant.put("streaming", "running".equals(status));
+    assistant.put("updatedAt", now);
+    assistant.put("promptTokens", promptTokens);
+    assistant.put("completionTokens", completionTokens);
+    assistant.put("totalTokens", totalTokens);
+    if (!stringValue(state.get("_type")).isBlank() && !stringValue(state.get("_model")).isBlank()) {
+      assistant.put("generation", Map.of("type", stringValue(state.get("_type")), "model", stringValue(state.get("_model"))));
+    }
+    session.put("messages", messages);
+    session.put("_version", sessionVersion(session) + 1);
+    enforceSessionSize(session);
+    data.put("session", writeMapValue(session));
+  }
+
+  private void mergeImageJobResult(Map<String, String> data, String assistantId,
+    Map<String, Object> state, List<String> images, String status, long now,
+    Integer promptTokens, Integer completionTokens, Integer totalTokens) {
+    if (isSessionTombstoned(data)) {
+      return;
+    }
+    var session = readMapValue(data.get("session"));
+    if (stringValue(session.get("id")).isBlank()) {
+      return;
+    }
+    var messages = listOfMaps(session.get("messages"));
+    Map<String, Object> assistant = null;
+    for (var message : messages) {
+      if (assistantId.equals(stringValue(message.get("id")))) {
+        assistant = message;
+        break;
+      }
+    }
+    if (assistant == null) {
+      assistant = new LinkedHashMap<>();
+      assistant.put("id", assistantId);
+      assistant.put("role", "assistant");
+      assistant.put("createdAt", now);
+      messages.add(assistant);
+    }
+    assistant.put("content", limitString(stringValue(state.get("content")), MAX_CONTENT_LENGTH));
+    assistant.put("images", images);
+    assistant.put("streaming", "running".equals(status));
+    assistant.put("updatedAt", now);
+    assistant.put("promptTokens", promptTokens);
+    assistant.put("completionTokens", completionTokens);
+    assistant.put("totalTokens", totalTokens);
+    if (!stringValue(state.get("_type")).isBlank() && !stringValue(state.get("_model")).isBlank()) {
+      assistant.put("generation", Map.of("type", stringValue(state.get("_type")), "model", stringValue(state.get("_model"))));
+    }
+    session.put("messages", messages);
+    session.put("_version", sessionVersion(session) + 1);
+    enforceSessionSize(session);
+    data.put("session", writeMapValue(session));
   }
 
   private Mono<Void> saveJob(String owner, String jobId, Map<String, Object> job) {
@@ -1692,10 +2041,12 @@ public class HaloAiConsoleEndpoint implements CustomEndpoint {
   private Mono<Map<String, Object>> fetchJob(String owner, String jobId) {
     return client.fetch(ConfigMap.class, jobStoreName(owner, jobId))
       .map(configMap -> readMapValue(configMap.getData() == null ? null : configMap.getData().get("job")))
-      .filter(job -> !stringValue(job.get("id")).isBlank())
+      .filter(job -> !stringValue(job.get("id")).isBlank()
+        && OwnerAccessPolicy.owns(owner, job.get("owner")))
       .switchIfEmpty(fetchStore(owner)
         .map(store -> readMapValue(store.getData().get(jobKey(jobId))))
-        .filter(job -> !stringValue(job.get("id")).isBlank()));
+        .filter(job -> !stringValue(job.get("id")).isBlank()
+          && OwnerAccessPolicy.owns(owner, job.get("owner"))));
   }
 
   private Mono<Void> saveLog(String owner, Map<String, Object> log) {
@@ -1705,6 +2056,19 @@ public class HaloAiConsoleEndpoint implements CustomEndpoint {
     configMap.setMetadata(metadata(name));
     configMap.setData(new LinkedHashMap<>(Map.of("log", writeMapValue(log))));
     return client.create(configMap).then();
+  }
+
+  private Mono<Void> saveAuthoritativeLog(String owner, String sessionId, String sessionTitle, String type,
+    String operation, String model, String status, String error, long startedAt, int estimatedPromptTokens,
+    Integer actualInputTokens, Integer actualOutputTokens, Integer actualTotalTokens, ServerRequest request) {
+    var finishedAt = System.currentTimeMillis();
+    var promptTokens = tokenValue(actualInputTokens, estimatedPromptTokens);
+    var completionTokens = tokenValue(actualOutputTokens, 0);
+    var totalTokens = tokenValue(actualTotalTokens, promptTokens + completionTokens);
+    var log = AuditRecordFactory.create(owner, sessionId, sessionTitle, type, operation, model,
+      status, error, startedAt, finishedAt, promptTokens, completionTokens, totalTokens,
+      requestAuditMeta(request));
+    return saveLog(owner, log).then(incrementDailyUsage(owner, dayKey(finishedAt), totalTokens));
   }
 
   private Mono<Void> cleanupExpiredRecords() {
@@ -1721,6 +2085,7 @@ public class HaloAiConsoleEndpoint implements CustomEndpoint {
         .then(deleteExcessJobs(maxJobsPerUser))
         .then(deleteExpiredLogs(logCutoff))
         .then(deleteExpiredImageCaches(imageCacheCutoff))
+        .then(deleteExpiredSessionTombstones(now - SESSION_TOMBSTONE_RETENTION_MS))
         .then(deleteExpiredUsage(logCutoff));
     });
   }
@@ -1813,6 +2178,24 @@ public class HaloAiConsoleEndpoint implements CustomEndpoint {
       .then();
   }
 
+  private Mono<Void> deleteExpiredSessionTombstones(long cutoff) {
+    return client.list(
+        ConfigMap.class,
+        item -> item.getMetadata() != null && idOf(item).startsWith(SESSION_CONFIG_MAP_PREFIX),
+        Comparator.comparing(this::idOf)
+      )
+      .filter(configMap -> {
+        var data = configMap.getData();
+        if (data == null || data.containsKey("session")) {
+          return false;
+        }
+        var deletedAt = longValue(data.get("deletedAt"));
+        return deletedAt != null && deletedAt < cutoff;
+      })
+      .flatMap(configMap -> client.delete(configMap).then())
+      .then();
+  }
+
   private Flux<JobRecord> jobRecords() {
     return client.list(
         ConfigMap.class,
@@ -1825,8 +2208,7 @@ public class HaloAiConsoleEndpoint implements CustomEndpoint {
   }
 
   private boolean isTerminalJobStatus(Object status) {
-    var value = stringValue(status);
-    return !value.isBlank() && !"running".equals(value) && !"pending".equals(value);
+    return JobLifecyclePolicy.isTerminal(status);
   }
 
   private long jobUpdatedAt(Map<String, Object> job) {
@@ -1848,9 +2230,18 @@ public class HaloAiConsoleEndpoint implements CustomEndpoint {
   }
 
   private Mono<Void> deleteSessionStore(String owner, String sessionId) {
-    return client.fetch(ConfigMap.class, sessionStoreName(owner, sessionId))
-      .flatMap(client::delete)
-      .then();
+    return updateSessionStore(owner, sessionId, data -> {
+      var storedSession = readMapValue(data.get("session"));
+      var nextVersion = Math.max(sessionVersion(storedSession),
+        nullToZero(longValue(data.get("tombstoneVersion")))) + 1;
+      data.remove("session");
+      data.put("tombstoneVersion", String.valueOf(nextVersion));
+      data.put("deletedAt", String.valueOf(System.currentTimeMillis()));
+    }).then();
+  }
+
+  private long sessionVersion(Map<String, Object> session) {
+    return Math.max(0L, nullToZero(longValue(session.get("_version"))));
   }
 
   private Mono<List<Map<String, Object>>> sessionsForExport(String owner) {
@@ -1874,7 +2265,7 @@ public class HaloAiConsoleEndpoint implements CustomEndpoint {
   }
 
   private Flux<JobRecord> jobRecordsForOwner(String owner) {
-    return jobRecords().filter(record -> owner.equals(stringValue(record.job.get("owner"))));
+    return jobRecords().filter(record -> OwnerAccessPolicy.owns(owner, record.job.get("owner")));
   }
 
   private List<Map<String, Object>> attachmentReferences(List<Map<String, Object>> sessions) {
@@ -1924,13 +2315,7 @@ public class HaloAiConsoleEndpoint implements CustomEndpoint {
       return true;
     });
     runningJobStates.keySet().removeIf(key -> key.startsWith(ownerPrefix));
-    jobEventSinks.entrySet().removeIf(entry -> {
-      if (!entry.getKey().startsWith(ownerPrefix)) {
-        return false;
-      }
-      entry.getValue().tryEmitComplete();
-      return true;
-    });
+    jobEvents.completeMatching(key -> key.startsWith(ownerPrefix));
     return Mono.empty();
   }
 
@@ -2135,9 +2520,22 @@ public class HaloAiConsoleEndpoint implements CustomEndpoint {
     return Mono.zip(fetchStore(owner), globalSettings())
       .map(tuple -> {
         var settings = validateSettings(readMapValue(tuple.getT1().getData().get(SETTINGS_KEY)));
-        settings.put("imageMaxSizeMb", tuple.getT2().get("imageMaxSizeMb"));
+        var policy = userModelPolicy(tuple.getT2());
+        settings.put("modelPolicy", policy);
+        settings.put("imageMaxSizeMb", policy.get("imageMaxSizeMb"));
         return settings;
       });
+  }
+
+  private Map<String, Object> userModelPolicy(Map<String, Object> globalSettings) {
+    var policy = new LinkedHashMap<String, Object>();
+    for (var key : List.of("defaultLanguageModelMode", "defaultLanguageModel",
+      "defaultMultimodalModelMode", "defaultMultimodalModel", "defaultImageModelMode",
+      "defaultImageModel", "allowedModels")) {
+      policy.put(key, globalSettings.get(key));
+    }
+    policy.put("imageMaxSizeMb", clampInt(globalSettings.get("imageMaxSizeMb"), 1, 10, 8));
+    return policy;
   }
 
   private Mono<Map<String, Object>> globalSettings() {
@@ -2147,8 +2545,8 @@ public class HaloAiConsoleEndpoint implements CustomEndpoint {
         if (data == null) {
           return validateGlobalSettings(new LinkedHashMap<>());
         }
-        var grouped = readMapValue(data.get(GLOBAL_CONFIG_GROUP));
-        if (!grouped.isEmpty()) {
+        if (data.containsKey(GLOBAL_CONFIG_GROUP)) {
+          var grouped = readRequiredGlobalSettings(data.get(GLOBAL_CONFIG_GROUP));
           return validateGlobalSettings(grouped);
         }
         var flat = new LinkedHashMap<String, Object>();
@@ -2156,6 +2554,24 @@ public class HaloAiConsoleEndpoint implements CustomEndpoint {
         return validateGlobalSettings(flat);
       })
       .switchIfEmpty(Mono.fromSupplier(() -> validateGlobalSettings(new LinkedHashMap<>())));
+  }
+
+  private Map<String, Object> readRequiredGlobalSettings(String value) {
+    if (value == null || value.isBlank()) {
+      throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE,
+        "全局插件设置为空或损坏，请由管理员检查并重新保存设置。" );
+    }
+    try {
+      var parsed = objectMapper.readValue(value, new TypeReference<Map<String, Object>>() {});
+      if (parsed == null) {
+        throw new IOException("empty settings map");
+      }
+      return parsed;
+    } catch (IOException | IllegalArgumentException error) {
+      log.error("Global Halo AI Console settings are invalid", error);
+      throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE,
+        "全局插件设置损坏，请由管理员检查并重新保存设置。", error);
+    }
   }
 
   private Map<String, Object> validateGlobalSettings(Map<String, Object> source) {
@@ -2167,7 +2583,7 @@ public class HaloAiConsoleEndpoint implements CustomEndpoint {
     settings.put("defaultImageModelMode", normalizeModelMode(source.get("defaultImageModelMode")));
     settings.put("defaultImageModel", limitString(stringValue(source.get("defaultImageModel")), 160));
     settings.put("allowedModels", cleanModelNames(source.get("allowedModels")));
-    settings.put("imageMaxSizeMb", clampInt(source.get("imageMaxSizeMb"), 1, 50, 8));
+    settings.put("imageMaxSizeMb", clampInt(source.get("imageMaxSizeMb"), 1, 10, 8));
     settings.put("maxConcurrentJobs", clampInt(source.get("maxConcurrentJobs"), 1, 20, 2));
     settings.put("requestsPerMinute", clampInt(source.get("requestsPerMinute"), 1, 300, 12));
     settings.put("dailyTokenLimit", clampInt(source.get("dailyTokenLimit"), 1000, 10_000_000, 200_000));
@@ -2212,14 +2628,15 @@ public class HaloAiConsoleEndpoint implements CustomEndpoint {
   }
 
   private Mono<UsageReservation> reserveUsage(String owner, Map<String, Object> globalSettings, Integer promptTokens,
-    String jobId) {
+    int maxOutputTokens, String jobId) {
     var maxConcurrent = clampInt(globalSettings.get("maxConcurrentJobs"), 1, 20, 2);
     var perMinute = clampInt(globalSettings.get("requestsPerMinute"), 1, 300, 12);
     var dailyLimit = clampInt(globalSettings.get("dailyTokenLimit"), 1000, 10_000_000, 200_000);
     var prompt = Math.max(0, promptTokens == null ? 0 : promptTokens);
+    var reserved = saturatedTokenSum(prompt, maxOutputTokens);
     var now = System.currentTimeMillis();
     var day = dayKey(now);
-    var reservation = new UsageReservation(owner, day, prompt, jobId);
+    var reservation = new UsageReservation(owner, day, prompt, reserved, jobId);
     return currentDailyUsage(owner, day).flatMap(consumed -> updateUsageRecord(owner, day, data -> {
       var recordedTokens = intValue(data.get("tokens"));
       if ((recordedTokens == null || recordedTokens == 0) && consumed > 0) {
@@ -2238,17 +2655,15 @@ public class HaloAiConsoleEndpoint implements CustomEndpoint {
         .map(this::castMapValue)
         .mapToInt(item -> intValue(item.get("tokens")) == null ? 0 : intValue(item.get("tokens")))
         .sum();
-      if (running >= maxConcurrent) {
-        throw tooManyRequests("并发 AI 任务过多，请等待现有任务完成后重试。");
-      }
-      if (requestTimes.size() >= perMinute) {
-        throw tooManyRequests("一分钟内的 AI 请求次数已达到上限，请稍后重试。");
-      }
-      if (consumed + reservedTokens + prompt > dailyLimit) {
-        throw tooManyRequests("今日 AI Token 配额已用尽，请联系管理员或明日再试。");
+      try {
+        QuotaPolicy.validate(
+          new QuotaPolicy.Snapshot(running, requestTimes.size(), consumed, reservedTokens, reserved),
+          new QuotaPolicy.Limits(maxConcurrent, perMinute, dailyLimit));
+      } catch (QuotaPolicy.Exceeded exceeded) {
+        throw tooManyRequests(exceeded.getMessage());
       }
       var item = new LinkedHashMap<String, Object>();
-      item.put("tokens", prompt);
+      item.put("tokens", reserved);
       item.put("createdAt", now);
       item.put("instanceId", instanceId);
       reservations.put(safeName("job", jobId), item);
@@ -2271,7 +2686,7 @@ public class HaloAiConsoleEndpoint implements CustomEndpoint {
           state.requestTimes.removeFirst();
         }
         state.running++;
-        state.reservedTokens += prompt;
+        state.reservedTokens = saturatedTokenSum(state.reservedTokens, reserved);
         state.requestTimes.addLast(now);
       }
     }));
@@ -2290,7 +2705,7 @@ public class HaloAiConsoleEndpoint implements CustomEndpoint {
         state.running--;
       }
       if (reservation.day.equals(state.day)) {
-        state.reservedTokens = Math.max(0, state.reservedTokens - reservation.promptTokens);
+        state.reservedTokens = Math.max(0, state.reservedTokens - reservation.reservedTokens);
       }
     }
     return releasePersistentUsageReservation(reservation);
@@ -2327,12 +2742,7 @@ public class HaloAiConsoleEndpoint implements CustomEndpoint {
     }
     return authentication.getAuthorities().stream()
       .map(authority -> authority.getAuthority())
-      .anyMatch(authority -> authority.contains("plugin:halo-ai-console:admin")
-        || authority.contains("plugin:halo-ai-console:call-log-all")
-        || authority.contains("role-template-halo-ai-console-admin")
-        || authority.contains("super-role")
-        || authority.contains("super-admin")
-        || authority.contains("administrator"));
+      .anyMatch(ADMIN_AUTHORITIES::contains);
   }
 
   private ResponseStatusException tooManyRequests(String message) {
@@ -2341,6 +2751,14 @@ public class HaloAiConsoleEndpoint implements CustomEndpoint {
 
   private String nextJobId() {
     return safeName("job", "job-" + UUID.randomUUID());
+  }
+
+  private String auxiliaryOperation(Object value) {
+    var operation = stringValue(value);
+    if (!AUXILIARY_OPERATIONS.contains(operation)) {
+      throw badRequest("不支持的辅助调用类型。");
+    }
+    return operation;
   }
 
   private Map<String, Object> normalizeSessionSnapshot(String sessionId, String owner, Map<String, Object> body,
@@ -2365,22 +2783,7 @@ public class HaloAiConsoleEndpoint implements CustomEndpoint {
     return meta;
   }
 
-  private void copyAuditFields(Map<String, Object> source, Map<String, Object> target) {
-    for (var key : List.of("ipAddress", "userAgent", "browser", "operatingSystem")) {
-      var value = source.get(key);
-      if (value != null && !String.valueOf(value).isBlank()) {
-        target.put(key, value);
-      }
-    }
-  }
-
   private String clientIp(ServerRequest request) {
-    for (var header : List.of("X-Forwarded-For", "X-Real-IP", "CF-Connecting-IP")) {
-      var value = stringValue(request.headers().firstHeader(header));
-      if (!value.isBlank()) {
-        return limitString(value.split(",")[0].trim(), 128);
-      }
-    }
     return request.remoteAddress().map(address -> address.getAddress().getHostAddress()).orElse("");
   }
 
@@ -2405,21 +2808,27 @@ public class HaloAiConsoleEndpoint implements CustomEndpoint {
 
   private String cleanAiFoundationError(Throwable error) {
     var message = error == null ? "" : stringValue(error.getMessage());
-    if (message.isBlank()) {
-      return "AI Foundation 请求失败，请检查模型配置后重试。";
-    }
     var parsed = readMapValue(message);
     var detail = stringValue(firstNonBlank(parsed.get("detail"), parsed.get("title"), parsed.get("message")));
-    if (!detail.isBlank()) {
-      if (detail.contains("No static resource")) {
-        return "当前 AI Foundation 版本没有提供该接口，或所选模型不支持此能力。";
-      }
-      return detail;
-    }
-    if (message.contains("No static resource")) {
+    var source = stringValue(firstNonBlank(detail, message)).toLowerCase();
+    if (source.contains("no static resource") || source.contains("not found")) {
       return "当前 AI Foundation 版本没有提供该接口，或所选模型不支持此能力。";
     }
-    return message;
+    if (source.contains("timeout") || source.contains("timed out")) {
+      return "模型响应超时，请稍后重试或选择其他模型。";
+    }
+    if (source.contains("unauthorized") || source.contains("forbidden")
+      || source.contains("authentication") || source.contains("api key")) {
+      return "模型服务认证失败，请联系站点管理员检查 AI Foundation 配置。";
+    }
+    if (source.contains("rate limit") || source.contains("too many requests") || source.contains(" 429")) {
+      return "模型服务当前限流，请稍后重试。";
+    }
+    if (source.contains("unavailable") || source.contains("bad gateway")
+      || source.contains("service unavailable") || source.contains(" 502") || source.contains(" 503")) {
+      return "模型服务暂时不可用，请稍后重试。";
+    }
+    return "AI Foundation 请求失败，请检查模型配置后重试。";
   }
 
   private void appendOutputLimited(Map<String, Object> state, String field, String delta, int maxLength, String error) {
@@ -2557,28 +2966,105 @@ public class HaloAiConsoleEndpoint implements CustomEndpoint {
       .orElse(null);
   }
 
-  private String baseUrl(ServerRequest request) {
-    var uri = request.uri();
-    var port = uri.getPort();
-    var authority = port > 0 ? uri.getHost() + ":" + port : uri.getHost();
-    return uri.getScheme() + "://" + authority;
-  }
-
-  private void copyHeader(ServerRequest request, HttpHeaders target, String name) {
-    var values = request.headers().header(name);
-    if (!values.isEmpty()) {
-      target.put(name, values);
+  private Mono<Void> ensureActive() {
+    if (shuttingDown.get()) {
+      return Mono.error(new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE,
+        "插件正在停止，暂时不能创建新的 AI 任务。"));
     }
+    return Mono.empty();
   }
 
   private Map<String, Object> validateSettings(Map<String, Object> source) {
     var settings = new LinkedHashMap<String, Object>();
     settings.put("lazyBatchSize", clampInt(source.get("lazyBatchSize"), 20, 200, 60));
     settings.put("olderBatchSize", clampInt(source.get("olderBatchSize"), 10, 100, 40));
-    settings.put("imageMaxSizeMb", clampInt(source.get("imageMaxSizeMb"), 1, 50, 8));
     settings.put("autoCompressPercent", clampInt(source.get("autoCompressPercent"), 50, 98, 85));
     settings.put("memoryText", limitString(stringValue(source.get("memoryText")), 20000));
     return settings;
+  }
+
+  /**
+   * Replaces a browser-provided media URL with a permalink resolved from an attachment owned by
+   * the current user. The boolean marker is internal only and is required by the SDK adapter.
+   */
+  private Mono<List<Map<String, Object>>> canonicalizeMessageAttachmentUrls(String owner,
+    List<Map<String, Object>> messages) {
+    return Flux.fromIterable(messages)
+      .concatMap(message -> {
+        var canonicalMessage = new LinkedHashMap<String, Object>(message);
+        return Flux.fromIterable(listOfMaps(message.get("parts")))
+          .concatMap(part -> canonicalizeAttachmentReference(owner, part))
+          .collectList()
+          .map(parts -> {
+            canonicalMessage.put("parts", parts);
+            return (Map<String, Object>) canonicalMessage;
+          });
+      })
+      .collectList();
+  }
+
+  private Mono<Map<String, Object>> canonicalizeImagePayload(String owner, Map<String, Object> payload) {
+    var canonical = new LinkedHashMap<String, Object>(payload);
+    var imagesKey = payload.containsKey("images") ? "images" : "inputImages";
+    return Flux.fromIterable(listOfMaps(payload.get(imagesKey)))
+      .concatMap(image -> canonicalizeAttachmentReference(owner, image))
+      .collectList()
+      .flatMap(images -> {
+        canonical.put(imagesKey, images);
+        var mask = castMapValue(payload.get("mask"));
+        if (mask.isEmpty()) {
+          return Mono.just(canonical);
+        }
+        return canonicalizeAttachmentReference(owner, mask)
+          .map(canonicalMask -> {
+            canonical.put("mask", canonicalMask);
+            return canonical;
+          });
+      });
+  }
+
+  private Mono<Map<String, Object>> canonicalizeAttachmentReference(String owner,
+    Map<String, Object> source) {
+    var canonical = new LinkedHashMap<String, Object>(source);
+    canonical.remove("_trustedAttachmentUrl");
+    if (!stringValue(canonical.get("data")).isBlank()) {
+      // Data is validated separately and takes precedence in the AI Foundation SDK.
+      canonical.remove("url");
+      return Mono.just(canonical);
+    }
+    if (stringValue(canonical.get("url")).isBlank()) {
+      return Mono.just(canonical);
+    }
+    var attachmentName = limitString(stringValue(canonical.get("attachmentName")), 120);
+    if (attachmentName.isBlank()) {
+      return Mono.error(badRequest("媒体地址必须引用当前用户已上传的 Halo 附件。"));
+    }
+    return client.fetch(Attachment.class, attachmentName)
+      .switchIfEmpty(Mono.error(new ResponseStatusException(HttpStatus.NOT_FOUND,
+        "引用的 Halo 附件不存在或已被删除。")))
+      .flatMap(attachment -> {
+        var spec = attachment.getSpec();
+        if (spec == null || !owner.equals(spec.getOwnerName())) {
+          return Mono.error(new ResponseStatusException(HttpStatus.FORBIDDEN,
+            "不能使用其他用户的 Halo 附件。"));
+        }
+        var requestedMediaType = stringValue(canonical.get("mediaType"));
+        var attachmentMediaType = spec.getMediaType();
+        if (!requestedMediaType.isBlank() && attachmentMediaType != null
+          && !attachmentMediaType.isBlank()
+          && !requestedMediaType.equalsIgnoreCase(attachmentMediaType)) {
+          return Mono.error(badRequest("附件媒体类型与上传记录不一致。"));
+        }
+        return attachmentService.getPermalink(attachment)
+          .map(permalink -> {
+            canonical.put("url", permalink.toString());
+            canonical.put("_trustedAttachmentUrl", true);
+            if (requestedMediaType.isBlank() && attachmentMediaType != null) {
+              canonical.put("mediaType", attachmentMediaType);
+            }
+            return canonical;
+          });
+      });
   }
 
   private void validateAiRequestMessages(List<Map<String, Object>> messages, Map<String, Object> globalSettings) {
@@ -2586,55 +3072,17 @@ public class HaloAiConsoleEndpoint implements CustomEndpoint {
     var maxChars = clampInt(globalSettings.get("maxContextCharacters"), 4000, 200_000, MAX_REQUEST_CHARS);
     var maxImages = clampInt(globalSettings.get("maxImagesPerRequest"), 0, 50, MAX_REQUEST_IMAGES);
     var maxImageBytes = maxImageBytes(globalSettings);
-    if (messages.size() > maxMessages) {
-      throw badRequest("发送给 AI 的上下文消息数量超过限制。");
+    try {
+      ConversationRequestPolicy.validate(messages, new ConversationRequestPolicy.Limits(
+        maxMessages, maxChars, maxImages, MAX_REQUEST_ATTACHMENTS, MAX_CONTENT_LENGTH, 2048,
+        MAX_DATA_URL_LENGTH));
+    } catch (ConversationRequestPolicy.Violation violation) {
+      throw badRequest(violation.getMessage());
     }
-    var chars = 0;
-    var images = 0;
-    var attachments = 0;
     for (var message : messages) {
-      var messageId = stringValue(message.get("id"));
-      if (messageId.isBlank() || messageId.length() > 120) {
-        throw badRequest("缺少消息标识。");
+      for (var part : listOfMaps(message.get("parts"))) {
+        validateDataUrlSize(stringValue(part.get("data")), maxImageBytes);
       }
-      if (!ROLES.contains(stringValue(message.get("role")))) {
-        throw badRequest("不支持该消息角色。");
-      }
-      var parts = listOfMaps(message.get("parts"));
-      if (parts.isEmpty()) {
-        throw badRequest("消息内容不能为空。");
-      }
-      for (var part : parts) {
-        var type = stringValue(part.get("type"));
-        if ("text".equals(type) && stringValue(part.get("id")).isBlank()) {
-          throw badRequest("缺少消息内容标识。");
-        }
-        var text = stringValue(firstNonBlank(part.get("text"), part.get("title")));
-        if (text.length() > MAX_CONTENT_LENGTH) {
-          throw badRequest("单段消息内容超过大小限制。");
-        }
-        chars += text.length();
-        if ("file".equals(type) || part.containsKey("data") || part.containsKey("url")) {
-          attachments++;
-          var mediaType = stringValue(part.get("mediaType"));
-          if (mediaType.startsWith("image/")) {
-            images++;
-          }
-          if (stringValue(part.get("url")).length() > 2048) {
-          throw badRequest("附件访问地址超过最大长度限制。");
-          }
-          if (stringValue(part.get("data")).length() > MAX_DATA_URL_LENGTH) {
-          throw badRequest("附件数据超过最大长度限制。");
-          }
-          validateDataUrlSize(stringValue(part.get("data")), maxImageBytes);
-        }
-      }
-    }
-    if (chars > maxChars) {
-      throw badRequest("发送给 AI 的上下文总量超过限制。");
-    }
-    if (images > maxImages || attachments > MAX_REQUEST_ATTACHMENTS) {
-      throw badRequest("发送给 AI 的图片或附件数量超过限制。");
     }
   }
 
@@ -2650,13 +3098,65 @@ public class HaloAiConsoleEndpoint implements CustomEndpoint {
       throw badRequest("输入图片数量超过限制。");
     }
     for (var image : inputImages) {
-      if (stringValue(image.get("url")).length() > 2048) {
+      validateImageInput(image, maxImageBytes);
+    }
+    var mask = castMapValue(payload.get("mask"));
+    if (!mask.isEmpty()) {
+      validateImageInput(mask, maxImageBytes);
+    }
+    for (var forbidden : List.of("headers", "providerOptions", "maxRetries", "maxParallelCalls")) {
+      if (payload.containsKey(forbidden)) {
+        throw badRequest("图像生成不允许客户端设置 " + forbidden + "。");
+      }
+    }
+    var n = intValue(payload.get("n"));
+    if (n != null && (n < 1 || n > MAX_IMAGE_RESULTS_PER_REQUEST)) {
+      throw badRequest("单次图像生成数量必须在 1 到 " + MAX_IMAGE_RESULTS_PER_REQUEST + " 之间。");
+    }
+    var size = stringValue(payload.get("size"));
+    if (!size.isBlank()) {
+      validateImageSize(size);
+    }
+    var width = intValue(payload.get("width"));
+    var height = intValue(payload.get("height"));
+    if ((width == null) != (height == null)) {
+      throw badRequest("图像宽度和高度必须同时提供。");
+    }
+    if (width != null) {
+      validateImageDimensions(width, height);
+    }
+    var responseFormat = stringValue(payload.get("responseFormat"));
+    if (!responseFormat.isBlank() && !"URL".equalsIgnoreCase(responseFormat)
+      && !"BASE64".equalsIgnoreCase(responseFormat)) {
+      throw badRequest("图像响应格式只能是 URL 或 BASE64。");
+    }
+  }
+
+  private void validateImageInput(Map<String, Object> image, long maxImageBytes) {
+    if (stringValue(image.get("url")).length() > 2048) {
         throw badRequest("输入图片的访问地址超过最大长度限制。");
-      }
-      if (stringValue(image.get("data")).length() > MAX_DATA_URL_LENGTH) {
+    }
+    if (stringValue(image.get("data")).length() > MAX_DATA_URL_LENGTH) {
         throw badRequest("输入图片数据超过最大长度限制。");
-      }
-      validateDataUrlSize(stringValue(image.get("data")), maxImageBytes);
+    }
+    validateDataUrlSize(stringValue(image.get("data")), maxImageBytes);
+    if (!stringValue(image.get("url")).isBlank() && stringValue(image.get("attachmentName")).isBlank()) {
+      throw badRequest("输入图片地址必须引用当前用户已上传的 Halo 附件。");
+    }
+  }
+
+  private void validateImageSize(String size) {
+    if (!size.matches("\\d{2,4}x\\d{2,4}")) {
+      throw badRequest("图像尺寸必须采用 宽x高 格式。");
+    }
+    var parts = size.split("x", 2);
+    validateImageDimensions(Integer.parseInt(parts[0]), Integer.parseInt(parts[1]));
+  }
+
+  private void validateImageDimensions(int width, int height) {
+    if (width < 64 || height < 64 || width > MAX_IMAGE_DIMENSION || height > MAX_IMAGE_DIMENSION
+      || (long) width * height > MAX_IMAGE_PIXELS) {
+      throw badRequest("图像尺寸超出允许范围。");
     }
   }
 
@@ -2671,14 +3171,28 @@ public class HaloAiConsoleEndpoint implements CustomEndpoint {
         putIfNotBlank(item, "data", stringValue(image.get("data")));
         putIfNotBlank(item, "mediaType", stringValue(image.get("mediaType")));
         putIfNotBlank(item, "filename", stringValue(firstNonBlank(image.get("filename"), image.get("name"))));
+        if (Boolean.TRUE.equals(image.get("_trustedAttachmentUrl"))) {
+          item.put("_trustedAttachmentUrl", true);
+        }
         return item;
       })
       .filter(image -> !stringValue(image.get("url")).isBlank() || !stringValue(image.get("data")).isBlank())
       .limit(MAX_IMAGES_PER_MESSAGE)
       .collect(Collectors.toList());
     normalized.put("images", images);
-    for (var key : List.of("mask", "n", "size", "width", "height", "aspectRatio", "seed",
-      "responseFormat", "maxRetries", "maxParallelCalls", "providerOptions", "headers")) {
+    var mask = castMapValue(payload.get("mask"));
+    if (!mask.isEmpty()) {
+      var normalizedMask = new LinkedHashMap<String, Object>();
+      putIfNotBlank(normalizedMask, "url", stringValue(mask.get("url")));
+      putIfNotBlank(normalizedMask, "data", stringValue(mask.get("data")));
+      putIfNotBlank(normalizedMask, "mediaType", stringValue(mask.get("mediaType")));
+      putIfNotBlank(normalizedMask, "filename", stringValue(firstNonBlank(mask.get("filename"), mask.get("name"))));
+      if (Boolean.TRUE.equals(mask.get("_trustedAttachmentUrl"))) {
+        normalizedMask.put("_trustedAttachmentUrl", true);
+      }
+      normalized.put("mask", normalizedMask);
+    }
+    for (var key : List.of("n", "size", "width", "height", "aspectRatio", "seed", "responseFormat")) {
       if (payload.containsKey(key) && payload.get(key) != null) {
         normalized.put(key, payload.get(key));
       }
@@ -2702,7 +3216,7 @@ public class HaloAiConsoleEndpoint implements CustomEndpoint {
     }
     session.put("memory", limitString(stringValue(session.get("memory")), MAX_MEMORY_LENGTH));
     var serialized = writeMapValue(session);
-    if (serialized.length() > MAX_SESSION_JSON_LENGTH) {
+    if (serialized.getBytes(StandardCharsets.UTF_8).length > MAX_SESSION_JSON_LENGTH) {
       throw badRequest("会话数据过大，无法安全保存。");
     }
   }
@@ -2713,8 +3227,13 @@ public class HaloAiConsoleEndpoint implements CustomEndpoint {
     return Math.max(min, Math.min(max, number));
   }
 
+  private int saturatedTokenSum(int left, int right) {
+    var total = (long) Math.max(0, left) + Math.max(0, right);
+    return total > Integer.MAX_VALUE ? Integer.MAX_VALUE : (int) total;
+  }
+
   private long maxImageBytes(Map<String, Object> settings) {
-    var mb = clampInt(settings.get("imageMaxSizeMb"), 1, 50, 8);
+    var mb = clampInt(settings.get("imageMaxSizeMb"), 1, 10, 8);
     return Math.min(HARD_MAX_IMAGE_BYTES, mb * 1024L * 1024L);
   }
 

@@ -1,6 +1,7 @@
 package io.github.joshuajj.haloaiconsole.service;
 
 import java.util.ArrayList;
+import java.time.Duration;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -23,6 +24,11 @@ import run.halo.app.plugin.extensionpoint.ExtensionGetter;
 
 @Component
 public class AiFoundationModelInvoker {
+  private static final Duration TEXT_IDLE_TIMEOUT = Duration.ofSeconds(90);
+  private static final Duration TEXT_RESULT_TIMEOUT = Duration.ofMinutes(2);
+  private static final Duration IMAGE_RESULT_TIMEOUT = Duration.ofMinutes(3);
+  private static final int MAX_IMAGE_RESULTS_PER_REQUEST = 4;
+
   private final ExtensionGetter extensionGetter;
 
   public AiFoundationModelInvoker(ExtensionGetter extensionGetter) {
@@ -30,32 +36,36 @@ public class AiFoundationModelInvoker {
   }
 
   public Mono<StreamingText> streamText(String modelName, List<Map<String, Object>> messages,
-    int maxOutputTokens, String baseUrl) {
-    var request = textRequest(messages, maxOutputTokens, baseUrl);
+    int maxOutputTokens) {
+    var request = textRequest(messages, maxOutputTokens);
     return languageModel(modelName).map(model -> {
       var stream = model.streamText(request);
       Flux<TextDelta> deltas = stream.fullStream()
-        .handle((part, sink) -> {
+        .<TextDelta>handle((part, sink) -> {
           var delta = textDelta(part);
           if (delta != null) {
             sink.next(delta);
           }
-        });
-      return new StreamingText(deltas, stream.result().map(this::textResult));
+        })
+        .timeout(TEXT_IDLE_TIMEOUT);
+      return new StreamingText(deltas, stream.result()
+        .timeout(TEXT_RESULT_TIMEOUT)
+        .map(this::textResult));
     });
   }
 
   public Mono<TextResult> generateText(String modelName, List<Map<String, Object>> messages,
-    int maxOutputTokens, String baseUrl) {
+    int maxOutputTokens) {
     return languageModel(modelName)
-      .flatMap(model -> model.generateText(textRequest(messages, maxOutputTokens, baseUrl)))
+      .flatMap(model -> model.generateText(textRequest(messages, maxOutputTokens)))
+      .timeout(TEXT_RESULT_TIMEOUT)
       .map(this::textResult);
   }
 
-  public Mono<ImageResult> generateImage(String modelName, Map<String, Object> payload,
-    String baseUrl) {
+  public Mono<ImageResult> generateImage(String modelName, Map<String, Object> payload) {
     return imageModel(modelName)
-      .flatMap(model -> model.generateImage(imageRequest(payload, baseUrl)))
+      .flatMap(model -> model.generateImage(imageRequest(payload)))
+      .timeout(IMAGE_RESULT_TIMEOUT)
       .map(result -> {
         var images = result.getImages() == null
           ? List.<GeneratedImage>of()
@@ -97,14 +107,14 @@ public class AiFoundationModelInvoker {
   }
 
   private GenerateTextRequest textRequest(List<Map<String, Object>> messages,
-    int maxOutputTokens, String baseUrl) {
+    int maxOutputTokens) {
     return GenerateTextRequest.builder()
-      .messages(messages.stream().map(message -> modelMessage(message, baseUrl)).toList())
+      .messages(messages.stream().map(this::modelMessage).toList())
       .maxOutputTokens(maxOutputTokens)
       .build();
   }
 
-  private ModelMessage modelMessage(Map<String, Object> source, String baseUrl) {
+  private ModelMessage modelMessage(Map<String, Object> source) {
     var role = switch (stringValue(source.get("role")).toLowerCase()) {
       case "assistant" -> ModelMessageRole.ASSISTANT;
       case "system" -> ModelMessageRole.SYSTEM;
@@ -129,7 +139,7 @@ public class AiFoundationModelInvoker {
         continue;
       }
       if ("file".equals(type) || "image".equals(type)) {
-        var media = dataContent(sourcePart, baseUrl);
+        var media = dataContent(sourcePart);
         var mediaType = stringValue(sourcePart.get("mediaType"));
         parts.add(mediaType.startsWith("image/") || "image".equals(type)
           ? ModelMessagePart.image(media)
@@ -142,23 +152,23 @@ public class AiFoundationModelInvoker {
     return new ModelMessage(role, parts);
   }
 
-  private GenerateImageRequest imageRequest(Map<String, Object> payload, String baseUrl) {
+  private GenerateImageRequest imageRequest(Map<String, Object> payload) {
     var builder = GenerateImageRequest.builder()
       .prompt(stringValue(payload.get("prompt")));
     var imageSource = payload.containsKey("images") ? payload.get("images") : payload.get("inputImages");
     var images = listOfMaps(imageSource).stream()
-      .map(image -> dataContent(image, baseUrl))
+      .map(this::dataContent)
       .toList();
     if (!images.isEmpty()) {
       builder.images(images);
     }
     var mask = castMap(payload.get("mask"));
     if (!mask.isEmpty()) {
-      builder.mask(dataContent(mask, baseUrl));
+      builder.mask(dataContent(mask));
     }
     var n = integerValue(payload.get("n"));
     if (n != null) {
-      builder.n(n);
+      builder.n(Math.max(1, Math.min(MAX_IMAGE_RESULTS_PER_REQUEST, n)));
     }
     var size = stringValue(payload.get("size"));
     var width = integerValue(payload.get("width"));
@@ -177,42 +187,52 @@ public class AiFoundationModelInvoker {
     builder.responseFormat("BASE64".equalsIgnoreCase(responseFormat)
       ? ImageResponseFormat.BASE64
       : ImageResponseFormat.URL);
-    var maxRetries = integerValue(payload.get("maxRetries"));
-    if (maxRetries != null) {
-      builder.maxRetries(maxRetries);
-    }
-    var maxParallelCalls = integerValue(payload.get("maxParallelCalls"));
-    if (maxParallelCalls != null) {
-      builder.maxParallelCalls(maxParallelCalls);
-    }
-    var headers = stringMap(payload.get("headers"));
-    if (!headers.isEmpty()) {
-      builder.headers(headers);
-    }
     return builder.build();
   }
 
-  private DataContent dataContent(Map<String, Object> source, String baseUrl) {
+  private DataContent dataContent(Map<String, Object> source) {
     var filename = stringValue(firstNonBlank(source.get("filename"), source.get("name"),
       source.get("title")));
     var mediaType = stringValue(source.get("mediaType"));
     var data = stringValue(source.get("data"));
     if (hasText(data)) {
       if (data.startsWith("data:")) {
+        validateDataUrlMediaType(data, mediaType);
         return DataContent.dataUrl(data, filename);
       }
       return DataContent.data(data,
         hasText(mediaType) ? mediaType : "application/octet-stream", filename);
     }
     var url = stringValue(source.get("url"));
-    if (url.startsWith("/") && hasText(baseUrl)) {
-      url = baseUrl.replaceFirst("/+$", "") + url;
+    if (url.startsWith("/")) {
+      throw new IllegalArgumentException(
+        "媒体地址必须是 Halo 附件服务返回的绝对地址，不能使用请求派生的地址。"
+      );
     }
     if (!hasText(url)) {
       throw new IllegalArgumentException("媒体内容必须包含数据或访问地址。");
     }
+    if (!Boolean.TRUE.equals(source.get("_trustedAttachmentUrl"))) {
+      throw new IllegalArgumentException("远程媒体地址不受支持，请先上传到 Halo 附件库。");
+    }
     return DataContent.url(url,
       hasText(mediaType) ? mediaType : "application/octet-stream", filename);
+  }
+
+  private void validateDataUrlMediaType(String dataUrl, String declaredMediaType) {
+    var separator = dataUrl.indexOf(',');
+    if (separator <= "data:".length()) {
+      throw new IllegalArgumentException("媒体数据地址格式无效。");
+    }
+    var header = dataUrl.substring("data:".length(), separator);
+    var semicolon = header.indexOf(';');
+    var actualMediaType = (semicolon < 0 ? header : header.substring(0, semicolon)).trim();
+    if (actualMediaType.isBlank()) {
+      throw new IllegalArgumentException("媒体数据地址缺少媒体类型。");
+    }
+    if (hasText(declaredMediaType) && !declaredMediaType.trim().equalsIgnoreCase(actualMediaType)) {
+      throw new IllegalArgumentException("媒体数据类型与声明的媒体类型不一致。");
+    }
   }
 
   private TextDelta textDelta(TextStreamPart part) {
