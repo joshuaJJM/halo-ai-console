@@ -2,7 +2,7 @@
 
 本项目遵循 Semantic Versioning。历史制品一经发布即保持不变。
 
-## [0.4.1-alpha.14] - 2026-08-30 (unreleased development build)
+## [0.4.1-alpha.14] - 2026-08-31 (distributed test build)
 
 ### Fixed
 
