@@ -2,6 +2,12 @@
 
 本项目遵循 Semantic Versioning。历史制品一经发布即保持不变。
 
+## [0.4.1-alpha.15] - 2026-09-17 (unreleased development build)
+
+### Security
+
+- 将本地打包的 DOMPurify 从 `3.4.12` 更新至 `3.4.15`，纳入前端开发依赖和锁文件，并同步第三方声明与离线许可证引用。
+
 ## [0.4.1-alpha.14] - 2026-08-31 (distributed test build)
 
 ### Fixed

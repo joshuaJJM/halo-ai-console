@@ -1,9 +1,9 @@
-DOMPurify 3.4.12
+DOMPurify 3.4.15
 Copyright (c) Cure53 and other contributors.
 
 The bundled DOMPurify asset retains its upstream license banner. The upstream
 distribution declares Apache License 2.0 and Mozilla Public License 2.0. The
-following is the Apache License 2.0 text from the DOMPurify 3.4.12 release.
+following is the Apache License 2.0 text from the DOMPurify 3.4.15 release.
 
 Apache License
                            Version 2.0, January 2004
@@ -183,4 +183,4 @@ TERMS AND CONDITIONS FOR USE, REPRODUCTION, AND DISTRIBUTION
 END OF TERMS AND CONDITIONS
 
 The complete upstream license file is available at:
-https://github.com/cure53/DOMPurify/blob/3.4.12/LICENSE
+https://github.com/cure53/DOMPurify/blob/3.4.15/LICENSE

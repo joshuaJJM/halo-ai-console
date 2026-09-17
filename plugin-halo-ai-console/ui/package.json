@@ -10,5 +10,8 @@
     "build": "node build.mjs",
     "check": "node --check main.js && node --check src/job-status.cjs && node --check src/session-target.cjs && node --check src/session-version.cjs && node --check src/owner-cache.cjs",
     "test": "node --test test/*.test.cjs"
+  },
+  "devDependencies": {
+    "dompurify": "^3.4.15"
   }
 }

@@ -2,7 +2,7 @@
 
 Halo AI Console bundles or uses the following third-party resources:
 
-## DOMPurify 3.4.12
+## DOMPurify 3.4.15
 
 Copyright (c) Cure53 and contributors.
 

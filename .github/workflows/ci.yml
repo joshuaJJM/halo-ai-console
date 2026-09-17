@@ -39,5 +39,8 @@ jobs:
 
       - name: Verify packaged metadata and frontend entry
         run: |
-          unzip -p build/libs/halo-ai-console-0.4.1-alpha.2.jar plugin.yaml | grep 'version: "0.4.1-alpha.2"'
-          unzip -l build/libs/halo-ai-console-0.4.1-alpha.2.jar | grep 'ui/main.js'
+          version="$(./gradlew -q properties --property version | awk '/^version:/ { print $2 }')"
+          artifact="build/libs/halo-ai-console-${version}.jar"
+          test -f "$artifact"
+          unzip -p "$artifact" plugin.yaml | grep "version: \"${version}\""
+          unzip -l "$artifact" | grep 'ui/main.js'

@@ -1,8 +1,8 @@
 # Halo AI Console 隐私与数据处理说明
 
-最后更新：2026-08-30
+最后更新：2026-09-17
 
-Halo AI Console 是社区维护的 Halo Console 插件，不是 Halo 官方产品。本说明描述插件 `0.4.1-alpha.14` 的实际数据处理方式。Halo 站点管理员负责决定是否启用插件、配置哪些 AI Foundation 模型、授予哪些权限以及设置保存期限。
+Halo AI Console 是社区维护的 Halo Console 插件，不是 Halo 官方产品。本说明描述插件 `0.4.1-alpha.15` 的实际数据处理方式。Halo 站点管理员负责决定是否启用插件、配置哪些 AI Foundation 模型、授予哪些权限以及设置保存期限。
 
 ## 上传图片的安全处理
 
@@ -101,7 +101,7 @@ Halo AI Console 是社区维护的 Halo Console 插件，不是 Halo 官方产�
 
 ## 第三方资源和许可证
 
-- **DOMPurify 3.4.12**：打包在 `plugin-halo-ai-console/assets/dompurify.min.js`，上游声明 Apache License 2.0 或 Mozilla Public License 2.0，许可证见 [DOMPurify LICENSE](https://github.com/cure53/DOMPurify/blob/3.4.12/LICENSE)。
+- **DOMPurify 3.4.15**：打包在 `plugin-halo-ai-console/assets/dompurify.min.js`，上游声明 Apache License 2.0 或 Mozilla Public License 2.0，许可证见 [DOMPurify LICENSE](https://github.com/cure53/DOMPurify/blob/3.4.15/LICENSE)。
 - **Markdown**：优先使用 Halo Console 运行时的 `RichTextEditor.defaultMarkdownParser`；没有该能力时使用插件内置的最小解析器。没有打包 `marked` 或 `markdown-it`。
 - **Mermaid**：没有打包 Mermaid 官方库；插件只包含一个支持常见 `graph`/`flowchart` 箭头语法的轻量兼容渲染器，代码属于本项目。
 - **代码高亮**：`highlight-lite.js`/`highlight-lite.css` 是本项目代码，不是 `highlight.js` 的打包版本。

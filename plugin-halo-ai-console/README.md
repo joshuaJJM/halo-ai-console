@@ -21,7 +21,7 @@ This project is not an official Halo project and does not use the official Halo 
 - Automatically or manually compresses old messages when needed. The summary is saved into session memory so later model calls keep the important facts even when old message rows are not included.
 - Detects legacy `AiChatSession` / `AiChatMessage` / call-log / image-cache extension objects, prompts the user to migrate them into the per-user ConfigMap store, and records a backend migration marker so the prompt does not repeat across browsers.
 - Legacy extension objects are copied but not deleted when Halo reports missing indices for the old extension types. The migration still returns success with `legacyDeleteSkipped` and `deleteWarnings` so the new store is usable without risking data loss.
-- Renders Markdown, code blocks, lightweight Mermaid flowcharts, and common LaTeX fragments with local bundled assets. Rendered HTML is sanitized before insertion with bundled official DOMPurify `3.4.12` and falls back to a strict allow-list sanitizer before the script finishes loading; no external MathJax, highlight.js, or DOMPurify CDN is used.
+- Renders Markdown, code blocks, lightweight Mermaid flowcharts, and common LaTeX fragments with local bundled assets. Rendered HTML is sanitized before insertion with bundled official DOMPurify `3.4.15` and falls back to a strict allow-list sanitizer before the script finishes loading; no external MathJax, highlight.js, or DOMPurify CDN is used.
 - Backend jobs enforce the plugin global settings for model allow-list, context limits, generated image size, image-cache retention, and combined reasoning/output length. The persistent per-user/per-day ConfigMap is the cross-instance source of truth for concurrent reservations, request timestamps, and daily token usage; the JVM `usageStates` map is only a local cache/fast-path and is never the sole quota authority. Limit violations return `429 Too Many Requests` where applicable.
 
 ## Source build and review
@@ -76,9 +76,9 @@ The plugin installs these role templates:
 
 ## Build Artifact
 
-Current plugin version: `0.4.1-alpha.14`.
+Current plugin version: `0.4.1-alpha.15`.
 
-Next packaged jar: `halo-ai-console-0.4.1-alpha.14.jar`.
+Next packaged jar: `halo-ai-console-0.4.1-alpha.15.jar`.
 
 Historical packaged jars are committed under the repository `dist/` directory for quick download and regression comparison.
 
@@ -86,7 +86,7 @@ Historical packaged jars are committed under the repository `dist/` directory fo
 
 Halo AI Console 是社区维护的 Halo Console 插件，不是 Halo 官方插件。它通过 AI Foundation 发现模型并执行聊天、图像生成和多模态任务。用户选择“默认”时，使用的是 AI Foundation 中对应能力的默认模型：普通聊天使用语言模型，带图片输入时使用多模态模型，`/image` 或图像模式使用图像生成模型。
 
-从 `0.3.5` 升级到 `0.4.1-alpha.14` 后，请在 Halo 插件页执行一次“重载插件”，或重启 Halo，以刷新后端组件和前端资源。会话快照 API 现在要求客户端提交服务端版本；旧标签页和外部客户端必须刷新并携带 `_baseVersion`。插件 ID、权限、资源 GVK 和 ConfigMap 存储格式均保持不变，无需数据迁移。该 alpha 版本仅用于测试，不能替换已发布制品。
+从 `0.3.5` 升级到 `0.4.1-alpha.15` 后，请在 Halo 插件页执行一次“重载插件”，或重启 Halo，以刷新后端组件和前端资源。会话快照 API 现在要求客户端提交服务端版本；旧标签页和外部客户端必须刷新并携带 `_baseVersion`。插件 ID、权限、资源 GVK 和 ConfigMap 存储格式均保持不变，无需数据迁移。该 alpha 版本仅用于测试，不能替换已发布制品。
 
 插件本身免费。使用模型可能产生由 AI Foundation 中配置的第三方服务商收取的 API 费用，费用由 Halo 站点管理员承担。停用相关模型、删除 API 配置或禁用插件即可停止新的调用。
 
@@ -98,7 +98,7 @@ Halo AI Console 是社区维护的 Halo Console 插件，不是 Halo 官方插�
 
 ### 本地打包资源和许可证
 
-- `assets/dompurify.min.js`：DOMPurify `3.4.12`，上游许可证为 Apache License 2.0 或 Mozilla Public License 2.0，详见 [DOMPurify LICENSE](https://github.com/cure53/DOMPurify/blob/3.4.12/LICENSE)。
+- `assets/dompurify.min.js`：DOMPurify `3.4.15`，上游许可证为 Apache License 2.0 或 Mozilla Public License 2.0，详见 [DOMPurify LICENSE](https://github.com/cure53/DOMPurify/blob/3.4.15/LICENSE)。
 - JAR 内同时包含根目录 `LICENSE`、`THIRD-PARTY-NOTICES.md` 和 `licenses/DOMPURIFY-LICENSE.txt`，便于离线查看许可证和归属信息。
 - Markdown：优先使用 Halo Console 已提供的 `RichTextEditor.defaultMarkdownParser`；没有该运行时能力时使用插件内置的最小 Markdown 解析器。插件没有打包 `marked` 或 `markdown-it`。
 - Mermaid：没有打包 Mermaid 官方库；`main.js` 中的是只支持常见流程图箭头语法的轻量兼容渲染器，属于本项目代码。
