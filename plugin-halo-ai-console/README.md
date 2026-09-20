@@ -76,9 +76,9 @@ The plugin installs these role templates:
 
 ## Build Artifact
 
-Current plugin version: `0.4.1-alpha.15`.
+Current plugin version: `0.4.1-alpha.16`.
 
-Next packaged jar: `halo-ai-console-0.4.1-alpha.15.jar`.
+Next packaged jar: `halo-ai-console-0.4.1-alpha.16.jar`.
 
 Historical packaged jars are committed under the repository `dist/` directory for quick download and regression comparison.
 
@@ -86,7 +86,7 @@ Historical packaged jars are committed under the repository `dist/` directory fo
 
 Halo AI Console 是社区维护的 Halo Console 插件，不是 Halo 官方插件。它通过 AI Foundation 发现模型并执行聊天、图像生成和多模态任务。用户选择“默认”时，使用的是 AI Foundation 中对应能力的默认模型：普通聊天使用语言模型，带图片输入时使用多模态模型，`/image` 或图像模式使用图像生成模型。
 
-从 `0.3.5` 升级到 `0.4.1-alpha.15` 后，请在 Halo 插件页执行一次“重载插件”，或重启 Halo，以刷新后端组件和前端资源。会话快照 API 现在要求客户端提交服务端版本；旧标签页和外部客户端必须刷新并携带 `_baseVersion`。插件 ID、权限、资源 GVK 和 ConfigMap 存储格式均保持不变，无需数据迁移。该 alpha 版本仅用于测试，不能替换已发布制品。
+从 `0.3.5` 升级到 `0.4.1-alpha.16` 后，请在 Halo 插件页执行一次“重载插件”，或重启 Halo，以刷新后端组件和前端资源。会话快照 API 现在要求客户端提交服务端版本；旧标签页和外部客户端必须刷新并携带 `_baseVersion`。插件 ID、权限和资源 GVK 保持不变。`alpha.16` 对不安全或过长的存储标识使用 SHA-256 派生名称；旧名称会继续被读取并原位更新，不会自动删除或迁移现有 ConfigMap。该 alpha 版本仅用于测试，不能替换已发布制品。
 
 插件本身免费。使用模型可能产生由 AI Foundation 中配置的第三方服务商收取的 API 费用，费用由 Halo 站点管理员承担。停用相关模型、删除 API 配置或禁用插件即可停止新的调用。
 

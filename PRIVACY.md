@@ -2,7 +2,7 @@
 
 最后更新：2026-09-17
 
-Halo AI Console 是社区维护的 Halo Console 插件，不是 Halo 官方产品。本说明描述插件 `0.4.1-alpha.15` 的实际数据处理方式。Halo 站点管理员负责决定是否启用插件、配置哪些 AI Foundation 模型、授予哪些权限以及设置保存期限。
+Halo AI Console 是社区维护的 Halo Console 插件，不是 Halo 官方产品。本说明描述插件 `0.4.1-alpha.16` 的实际数据处理方式。Halo 站点管理员负责决定是否启用插件、配置哪些 AI Foundation 模型、授予哪些权限以及设置保存期限。
 
 ## 上传图片的安全处理
 
@@ -32,6 +32,8 @@ Halo AI Console 是社区维护的 Halo Console 插件，不是 Halo 官方产�
 - `halo-ai-console-log-*`：调用审计记录。
 - `halo-ai-console-usage-*`：每日 token 用量和限流/并发预留信息。
 - `halo-ai-console-config`：管理员在插件设置页保存的全局模型、限流、配额和保留策略。
+
+从 `0.4.1-alpha.16` 起，新的不安全或过长用户范围标识会使用截断 SHA-256 派生的 Kubernetes 名称，避免不同输入被有损字符替换或 `hashCode()` 合并。插件会继续读取既有的旧名称，并在旧记录存在时原位更新；此兼容处理不会自动复制、删除或重命名既有 ConfigMap。
 
 用户上传图片会经插件后端的大小检查，然后由 Halo 的附件服务保存到 Halo 配置的附件存储。发送给模型的附件 URL 必须携带 Halo 附件标识；插件会在服务端重新查询该附件、核验其属于当前用户，并使用 Halo 生成的链接代替浏览器提交的 URL。插件保存的只是附件引用或受限制的缓存数据；会话删除不会自动删除 Halo 附件。
 

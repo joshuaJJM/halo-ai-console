@@ -64,6 +64,7 @@ import io.github.joshuajj.haloaiconsole.policy.JobLifecyclePolicy;
 import io.github.joshuajj.haloaiconsole.policy.QuotaPolicy;
 import io.github.joshuajj.haloaiconsole.security.OwnerAccessPolicy;
 import io.github.joshuajj.haloaiconsole.security.ImageUploadPolicy;
+import io.github.joshuajj.haloaiconsole.security.KubernetesNamePolicy;
 import io.github.joshuajj.haloaiconsole.security.RemoteImageContentPolicy;
 import io.github.joshuajj.haloaiconsole.extension.AiChatCallLog;
 import io.github.joshuajj.haloaiconsole.extension.AiChatImageCache;
@@ -411,9 +412,9 @@ public class HaloAiConsoleEndpoint implements CustomEndpoint, DisposableBean {
       var deleteAuditLogs = Boolean.TRUE.equals(booleanValue(tuple.getT2().get("allowUserAuditLogDeletion")));
       return cancelOwnerJobs(owner)
         .then(Flux.concat(
-          deletionStep("sessions", deleteOwnedConfigMaps(SESSION_CONFIG_MAP_PREFIX + safeName("owner", owner) + "-")),
-          deletionStep("jobs", deleteOwnedConfigMaps(JOB_CONFIG_MAP_PREFIX + safeName("owner", owner) + "-")),
-          deletionStep("usage", deleteOwnedConfigMaps(USAGE_CONFIG_MAP_PREFIX + safeName("owner", owner) + "-")),
+          deletionStep("sessions", deleteOwnedConfigMaps(ownerConfigMapPrefixes(SESSION_CONFIG_MAP_PREFIX, owner))),
+          deletionStep("jobs", deleteOwnedConfigMaps(ownerConfigMapPrefixes(JOB_CONFIG_MAP_PREFIX, owner))),
+          deletionStep("usage", deleteOwnedConfigMaps(ownerConfigMapPrefixes(USAGE_CONFIG_MAP_PREFIX, owner))),
           deletionStep("auditLogs", deleteOwnedLogMaps(owner, deleteAuditLogs)),
           deletionStep("personalStore", clearOwnStore(owner, deleteAuditLogs))
         ).collectList())
@@ -1800,7 +1801,7 @@ public class HaloAiConsoleEndpoint implements CustomEndpoint, DisposableBean {
   }
 
   private Mono<ConfigMap> fetchStore(String owner) {
-    return client.fetch(ConfigMap.class, storeName(owner))
+    return fetchCompatibleConfigMap(storeName(owner), legacyStoreName(owner))
       .switchIfEmpty(Mono.defer(() -> {
         var configMap = new ConfigMap();
         configMap.setMetadata(metadata(storeName(owner)));
@@ -1816,7 +1817,7 @@ public class HaloAiConsoleEndpoint implements CustomEndpoint, DisposableBean {
   }
 
   private Mono<ConfigMap> fetchSessionStore(String owner, String sessionId) {
-    return client.fetch(ConfigMap.class, sessionStoreName(owner, sessionId))
+    return fetchCompatibleConfigMap(sessionStoreName(owner, sessionId), legacySessionStoreName(owner, sessionId))
       .switchIfEmpty(Mono.defer(() -> {
         var configMap = new ConfigMap();
         configMap.setMetadata(metadata(sessionStoreName(owner, sessionId)));
@@ -1832,7 +1833,7 @@ public class HaloAiConsoleEndpoint implements CustomEndpoint, DisposableBean {
   }
 
   private Mono<Map<String, Object>> fetchSessionSnapshot(String owner, String sessionId) {
-    return client.fetch(ConfigMap.class, sessionStoreName(owner, sessionId))
+    return fetchCompatibleConfigMap(sessionStoreName(owner, sessionId), legacySessionStoreName(owner, sessionId))
       .map(configMap -> {
         var data = configMap.getData();
         if (isSessionTombstoned(data)) {
@@ -2009,7 +2010,7 @@ public class HaloAiConsoleEndpoint implements CustomEndpoint, DisposableBean {
 
   private Mono<Void> saveJob(String owner, String jobId, Map<String, Object> job) {
     var name = jobStoreName(owner, jobId);
-    return client.fetch(ConfigMap.class, name)
+    return fetchCompatibleConfigMap(name, legacyJobStoreName(owner, jobId))
       .switchIfEmpty(Mono.defer(() -> {
         var configMap = new ConfigMap();
         configMap.setMetadata(metadata(name));
@@ -2039,7 +2040,7 @@ public class HaloAiConsoleEndpoint implements CustomEndpoint, DisposableBean {
   }
 
   private Mono<Map<String, Object>> fetchJob(String owner, String jobId) {
-    return client.fetch(ConfigMap.class, jobStoreName(owner, jobId))
+    return fetchCompatibleConfigMap(jobStoreName(owner, jobId), legacyJobStoreName(owner, jobId))
       .map(configMap -> readMapValue(configMap.getData() == null ? null : configMap.getData().get("job")))
       .filter(job -> !stringValue(job.get("id")).isBlank()
         && OwnerAccessPolicy.owns(owner, job.get("owner")))
@@ -2319,12 +2320,14 @@ public class HaloAiConsoleEndpoint implements CustomEndpoint, DisposableBean {
     return Mono.empty();
   }
 
-  private Mono<Integer> deleteOwnedConfigMaps(String prefix) {
-    return client.list(
-        ConfigMap.class,
-        item -> item.getMetadata() != null && idOf(item).startsWith(prefix),
-        Comparator.comparing(this::idOf)
-      )
+  private Mono<Integer> deleteOwnedConfigMaps(String... prefixes) {
+    return Flux.fromArray(prefixes)
+      .distinct()
+      .flatMap(prefix -> client.list(
+          ConfigMap.class,
+          item -> item.getMetadata() != null && idOf(item).startsWith(prefix),
+          Comparator.comparing(this::idOf)
+        ))
       .flatMap(configMap -> client.delete(configMap).thenReturn(1))
       .reduce(0, Integer::sum);
   }
@@ -2360,11 +2363,18 @@ public class HaloAiConsoleEndpoint implements CustomEndpoint, DisposableBean {
     if (!deleteAuditLogs) {
       return Mono.just(0);
     }
-    return deleteOwnedConfigMaps(LOG_CONFIG_MAP_PREFIX + safeName("owner", owner) + "-");
+    return deleteOwnedConfigMaps(ownerConfigMapPrefixes(LOG_CONFIG_MAP_PREFIX, owner));
   }
 
   private Mono<Integer> clearOwnStore(String owner, boolean deleteAuditLogs) {
-    return client.fetch(ConfigMap.class, storeName(owner))
+    return Flux.just(storeName(owner), legacyStoreName(owner))
+      .distinct()
+      .concatMap(name -> clearOwnStoreConfigMap(name, deleteAuditLogs))
+      .reduce(0, Integer::sum);
+  }
+
+  private Mono<Integer> clearOwnStoreConfigMap(String name, boolean deleteAuditLogs) {
+    return client.fetch(ConfigMap.class, name)
       .flatMap(configMap -> {
         var data = configMap.getData() == null
           ? new LinkedHashMap<String, String>()
@@ -2384,12 +2394,8 @@ public class HaloAiConsoleEndpoint implements CustomEndpoint, DisposableBean {
   }
 
   private Flux<Map<String, Object>> sessionStoreSessions(String owner) {
-    var prefix = SESSION_CONFIG_MAP_PREFIX + safeName("owner", owner) + "-";
-    return client.list(
-        ConfigMap.class,
-        item -> item.getMetadata() != null && idOf(item).startsWith(prefix),
-        Comparator.comparing(this::idOf)
-      )
+    var prefixes = ownerConfigMapPrefixes(SESSION_CONFIG_MAP_PREFIX, owner);
+    return listCompatibleConfigMaps(prefixes)
       .map(configMap -> readMapValue(configMap.getData() == null ? null : configMap.getData().get("session")))
       .filter(session -> !stringValue(session.get("id")).isBlank());
   }
@@ -2398,16 +2404,32 @@ public class HaloAiConsoleEndpoint implements CustomEndpoint, DisposableBean {
     return STORE_CONFIG_MAP_PREFIX + safeName("owner", owner);
   }
 
+  private String legacyStoreName(String owner) {
+    return STORE_CONFIG_MAP_PREFIX + legacySafeName("owner", owner);
+  }
+
   private String sessionStoreName(String owner, String sessionId) {
     return SESSION_CONFIG_MAP_PREFIX + safeName("owner", owner) + "-" + safeName("chat", sessionId);
+  }
+
+  private String legacySessionStoreName(String owner, String sessionId) {
+    return SESSION_CONFIG_MAP_PREFIX + legacySafeName("owner", owner) + "-" + legacySafeName("chat", sessionId);
   }
 
   private String jobStoreName(String owner, String jobId) {
     return JOB_CONFIG_MAP_PREFIX + safeName("owner", owner) + "-" + safeName("job", jobId);
   }
 
+  private String legacyJobStoreName(String owner, String jobId) {
+    return JOB_CONFIG_MAP_PREFIX + legacySafeName("owner", owner) + "-" + legacySafeName("job", jobId);
+  }
+
   private String usageStoreName(String owner, String day) {
     return USAGE_CONFIG_MAP_PREFIX + safeName("owner", owner) + "-" + safeName("day", day);
+  }
+
+  private String legacyUsageStoreName(String owner, String day) {
+    return USAGE_CONFIG_MAP_PREFIX + legacySafeName("owner", owner) + "-" + legacySafeName("day", day);
   }
 
   private String instanceStoreName(String checkedInstanceId) {
@@ -2438,11 +2460,7 @@ public class HaloAiConsoleEndpoint implements CustomEndpoint, DisposableBean {
   }
 
   private Flux<Map<String, Object>> logFluxFor(String owner) {
-    var currentLogs = client.list(
-        ConfigMap.class,
-        item -> item.getMetadata() != null && idOf(item).startsWith(LOG_CONFIG_MAP_PREFIX + safeName("owner", owner) + "-"),
-        Comparator.comparing(this::idOf)
-      )
+    var currentLogs = listCompatibleConfigMaps(ownerConfigMapPrefixes(LOG_CONFIG_MAP_PREFIX, owner))
       .map(configMap -> readMapValue(configMap.getData() == null ? null : configMap.getData().get("log")));
     var legacyLogs = fetchStore(owner)
       .flatMapMany(store -> Flux.fromIterable(store.getData().entrySet()))
@@ -2452,7 +2470,7 @@ public class HaloAiConsoleEndpoint implements CustomEndpoint, DisposableBean {
   }
 
   private Mono<Integer> currentDailyUsage(String owner, String day) {
-    return client.fetch(ConfigMap.class, usageStoreName(owner, day))
+    return fetchCompatibleConfigMap(usageStoreName(owner, day), legacyUsageStoreName(owner, day))
       .map(configMap -> {
         var tokens = intValue(configMap.getData() == null ? null : configMap.getData().get("tokens"));
         return tokens == null ? 0 : tokens;
@@ -2487,7 +2505,7 @@ public class HaloAiConsoleEndpoint implements CustomEndpoint, DisposableBean {
 
   private Mono<ConfigMap> updateUsageRecord(String owner, String day, Consumer<Map<String, String>> mutator) {
     var name = usageStoreName(owner, day);
-    return client.fetch(ConfigMap.class, name)
+    return fetchCompatibleConfigMap(name, legacyUsageStoreName(owner, day))
       .switchIfEmpty(Mono.defer(() -> {
         var configMap = new ConfigMap();
         configMap.setMetadata(metadata(name));
@@ -2712,7 +2730,8 @@ public class HaloAiConsoleEndpoint implements CustomEndpoint, DisposableBean {
   }
 
   private Mono<Void> releasePersistentUsageReservation(UsageReservation reservation) {
-    return client.fetch(ConfigMap.class, usageStoreName(reservation.owner, reservation.day))
+    return fetchCompatibleConfigMap(usageStoreName(reservation.owner, reservation.day),
+        legacyUsageStoreName(reservation.owner, reservation.day))
       .flatMap(configMap -> {
         var data = configMap.getData() == null
           ? new LinkedHashMap<String, String>()
@@ -3287,16 +3306,37 @@ public class HaloAiConsoleEndpoint implements CustomEndpoint, DisposableBean {
   }
 
   private String safeName(String prefix, String raw) {
-    var source = emptyToDefault(raw, prefix);
-    var normalized = source.toLowerCase().replaceAll("[^a-z0-9-]", "-").replaceAll("-+", "-");
-    normalized = normalized.replaceAll("^-|-$", "");
-    if (normalized.isBlank()) {
-      normalized = prefix;
+    return KubernetesNamePolicy.canonicalName(prefix, raw);
+  }
+
+  private String legacySafeName(String prefix, String raw) {
+    return KubernetesNamePolicy.legacyName(prefix, raw);
+  }
+
+  private String[] ownerConfigMapPrefixes(String resourcePrefix, String owner) {
+    return new String[] {
+      resourcePrefix + safeName("owner", owner) + "-",
+      resourcePrefix + legacySafeName("owner", owner) + "-"
+    };
+  }
+
+  private Mono<ConfigMap> fetchCompatibleConfigMap(String canonicalName, String legacyName) {
+    var canonical = client.fetch(ConfigMap.class, canonicalName);
+    if (canonicalName.equals(legacyName)) {
+      return canonical;
     }
-    if (normalized.length() > 56) {
-      normalized = prefix + "-" + Integer.toHexString(source.hashCode()) + "-" + normalized.substring(0, 32);
-    }
-    return normalized;
+    return canonical.switchIfEmpty(client.fetch(ConfigMap.class, legacyName));
+  }
+
+  private Flux<ConfigMap> listCompatibleConfigMaps(String... prefixes) {
+    return Flux.fromArray(prefixes)
+      .distinct()
+      .flatMap(prefix -> client.list(
+          ConfigMap.class,
+          item -> item.getMetadata() != null && idOf(item).startsWith(prefix),
+          Comparator.comparing(this::idOf)
+        ))
+      .distinct(this::idOf);
   }
 
   private List<Map<String, Object>> listOfMaps(Object value) {

@@ -2,6 +2,13 @@
 
 本项目遵循 Semantic Versioning。历史制品一经发布即保持不变。
 
+## [0.4.1-alpha.16] - 2026-09-20 (unreleased development build)
+
+### Security
+
+- 对新的不安全或过长 ConfigMap 标识使用 SHA-256 派生命名，消除有损 slug 和 `String.hashCode()` 造成的确定性碰撞。
+- 兼容读取旧名称；命中旧 ConfigMap 时仍在原记录上更新，不自动复制、删除或重命名历史数据。
+
 ## [0.4.1-alpha.15] - 2026-09-17 (unreleased development build)
 
 ### Security

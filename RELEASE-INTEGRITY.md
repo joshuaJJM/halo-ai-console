@@ -46,12 +46,12 @@ Checksum: halo-ai-console-0.3.5.jar.sha256
 ## Current distributed test artifact
 
 ```text
-Halo AI Console: 0.4.1-alpha.15
+Halo AI Console: 0.4.1-alpha.16
 Halo: >=2.25.0
 AI Foundation: >=1.0.1
 License: GNU AGPL v3
-Artifact: halo-ai-console-0.4.1-alpha.15.jar
-Checksum: halo-ai-console-0.4.1-alpha.15.jar.sha256
+Artifact: halo-ai-console-0.4.1-alpha.16.jar
+Checksum: halo-ai-console-0.4.1-alpha.16.jar.sha256
 ```
 
-`0.4.1-alpha.15` is the next unpublished test build. It supersedes the distributed `0.4.1-alpha.14` test artifact without replacing it. Before any publication it requires maintainer review, a new immutable JAR, a matching SHA-256 file, and a new `v0.4.1-alpha.15` tag. The published `0.3.5` artifact, checksum, and tag remain unchanged.
+`0.4.1-alpha.16` is the next unpublished test build. The unbuilt `0.4.1-alpha.15` source revision and the distributed `0.4.1-alpha.14` test artifact remain unchanged. Before any publication, `alpha.16` requires maintainer review, a new immutable JAR, a matching SHA-256 file, and a new `v0.4.1-alpha.16` tag. The published `0.3.5` artifact, checksum, and tag remain unchanged.
